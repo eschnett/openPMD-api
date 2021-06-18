@@ -129,8 +129,10 @@ template <typename R> void test_Region(const R &r) {
     CHECK((X | Y) == (Y | X));
     CHECK(((X | Y) | Z) == (X | (Y | Z)));
 
-    CHECK(E - (X & Y) == ((E - X) | (E - Y)));
-    CHECK(E - (X | Y) == ((E - X) & (E - Y)));
+    CHECK(set_difference(E, (X & Y)) ==
+          (set_difference(E, X) | set_difference(E, Y)));
+    CHECK(set_difference(E, (X | Y)) ==
+          (set_difference(E, X) & set_difference(E, Y)));
 
     CHECK((N ^ X) == X);
     CHECK((X ^ N) == X);
@@ -145,7 +147,7 @@ template <typename R> void test_Region(const R &r) {
     const R UXY = X | Y;
     CHECK((X <= UXY && Y <= UXY) == true);
 
-    const R DXY = X - Y;
+    const R DXY = set_difference(X, Y);
     CHECK((DXY <= X || !isdisjoint(DXY, Y)) == true);
 
     const R SXY = X ^ Y;

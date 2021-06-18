@@ -10,6 +10,7 @@
 #include <functional>
 #include <iostream>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace openPMD {
@@ -96,10 +97,10 @@ public:
     return b1 <= b2 && b1 != b2;
   }
   friend bool operator>(const Box &b1, const Box &b2) { return b2 < b1; }
-  bool issubset(const Box &b) const { return *this <= b; }
-  bool issuperset(const Box &b) const { return *this >= b; }
-  bool is_strict_subset(const Box &b) const { return *this < b; }
-  bool is_strict_superset(const Box &b) const { return *this > b; }
+  bool is_subset_of(const Box &b) const { return *this <= b; }
+  bool is_superset_of(const Box &b) const { return *this >= b; }
+  bool is_strict_subset_of(const Box &b) const { return *this < b; }
+  bool is_strict_superset_of(const Box &b) const { return *this > b; }
 
   // Set operations
   friend Box bounding_box(const Box &b1, const Box &b2) {
@@ -261,10 +262,10 @@ public:
     return b1 <= b2 && b1 != b2;
   }
   friend bool operator>(const Box &b1, const Box &b2) { return b2 < b1; }
-  bool issubset(const Box &b) const { return *this <= b; }
-  bool issuperset(const Box &b) const { return *this >= b; }
-  bool is_strict_subset(const Box &b) const { return *this < b; }
-  bool is_strict_superset(const Box &b) const { return *this > b; }
+  bool is_subset_of(const Box &b) const { return *this <= b; }
+  bool is_superset_of(const Box &b) const { return *this >= b; }
+  bool is_strict_subset_of(const Box &b) const { return *this < b; }
+  bool is_strict_superset_of(const Box &b) const { return *this > b; }
 
   // Set operations
   friend Box bounding_box(const Box &b1, const Box &b2) {
@@ -505,6 +506,26 @@ template <typename T, std::size_t D> struct less<openPMD::Regions::Box<T, D>> {
       return false;
     return openPMD::Regions::helpers::tuple_lt(
         make_tuple(x.lower(), x.upper()), make_tuple(y.lower(), y.upper()));
+  }
+};
+
+template <typename T, std::size_t D, typename U>
+struct equal_to<pair<openPMD::Regions::Box<T, D>, U>> {
+  constexpr bool
+  operator()(const pair<openPMD::Regions::Box<T, D>, U> &x,
+             const pair<openPMD::Regions::Box<T, D>, U> &y) const {
+    return openPMD::Regions::helpers::tuple_eq(make_tuple(x.first, x.second),
+                                               make_tuple(y.first, y.second));
+  }
+};
+
+template <typename T, std::size_t D, typename U>
+struct less<pair<openPMD::Regions::Box<T, D>, U>> {
+  constexpr bool
+  operator()(const pair<openPMD::Regions::Box<T, D>, U> &x,
+             const pair<openPMD::Regions::Box<T, D>, U> &y) const {
+    return openPMD::Regions::helpers::tuple_lt(make_tuple(x.first, x.second),
+                                               make_tuple(y.first, y.second));
   }
 };
 

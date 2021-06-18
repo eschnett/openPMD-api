@@ -10,6 +10,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -24,25 +25,25 @@ namespace Regions {
  *
  * The dimension D needs to be known at compile time. @see NDRegion
  */
-template <typename T, std::size_t D> class Region;
+template <typename T, std::size_t D, typename V = bool> class Region;
 
 ////////////////////////////////////////////////////////////////////////////////
 
-template <typename T> class Region<T, 0> {
+template <typename T, typename V> class Region<T, 0, V> {
 public:
   constexpr static std::size_t D = 0;
 
 private:
-  bool is_full;
+  V count;
 
-  friend class std::equal_to<Region<T, D>>;
-  friend class std::less<Region<T, D>>;
-  friend class Region<T, D + 1>;
+  friend class std::equal_to<Region<T, D, V>>;
+  friend class std::less<Region<T, D, V>>;
+  friend class Region<T, D + 1, V>;
 
   // This should be private, but GCC 9 seems to ignore the friend
   // declaration above
 public:
-  explicit constexpr Region(bool is_full_) : is_full(is_full_) {}
+  explicit constexpr Region(const V &count_) : count(count_) {}
 
 private:
 public:
@@ -61,23 +62,23 @@ public:
 
   /** Create empty region
    */
-  constexpr Region() : is_full(false) {}
+  constexpr Region() : count(false) {}
 
   Region(const Region &) = default;
   Region(Region &&) = default;
   Region &operator=(const Region &) = default;
   Region &operator=(Region &&) = default;
 
-  Region(const Point<T, D> &) : is_full(true) {}
-  Region(const Box<T, D> &b) : is_full(!b.empty()) {}
+  Region(const Point<T, D> &) : count(true) {}
+  Region(const Box<T, D> &b) : count(!b.empty()) {}
 
-  template <typename U>
-  Region(const Region<U, D> &region) : is_full(region.is_full) {}
+  template <typename U, typename W = V>
+  Region(const Region<U, D, W> &region) : count(region.count) {}
 
   Region(const std::vector<Box<T, D>> &bs) {
-    is_full = false;
+    count = false;
     for (const auto &b : bs)
-      is_full |= !b.empty();
+      count += !b.empty();
   }
   operator std::vector<Box<T, D>>() const {
     if (empty())
@@ -87,13 +88,14 @@ public:
 
   // Predicates
   size_type ndims() const { return D; }
-  bool empty() const { return !is_full; }
-  size_type size() const { return is_full; }
-  size_type nboxes() const { return is_full; }
+  bool empty() const { return !count; }
+  T value() const { return count; }
+  size_type size() const { return count; }
+  size_type nboxes() const { return !!count; }
 
   // Comparison operators
   friend bool operator==(const Region &region1, const Region &region2) {
-    return region1.empty() == region2.empty();
+    return region1.count == region2.count;
   }
   friend bool operator!=(const Region &region1, const Region &region2) {
     return !(region1 == region2);
@@ -134,36 +136,70 @@ public:
     return Box<T, D>(Point<T, D>());
   }
 
-  friend Region operator&(const Region &region1, const Region &region2) {
-    return Region(!region1.empty() & !region2.empty());
+  friend Region operator+(const Region &region) {
+    return Region(+region.count);
   }
-  friend Region operator|(const Region &region1, const Region &region2) {
-    return Region(!region1.empty() | !region2.empty());
+  friend Region operator-(const Region &region) {
+    return Region(-region.count);
   }
-  friend Region operator^(const Region &region1, const Region &region2) {
-    return Region(!region1.empty() ^ !region2.empty());
+  friend Region abs(const Region &region) {
+    using std::abs;
+    return Region(abs(region.count));
+  }
+  friend Region relu(const Region &region) {
+    using std::max;
+    return Region(max(V(0), region.count));
+  }
+  friend Region operator+(const Region &region1, const Region &region2) {
+    return Region(helpers::add(region1.count, region2.count));
   }
   friend Region operator-(const Region &region1, const Region &region2) {
-    return Region(!region1.empty() & region2.empty());
+    return Region(helpers::add(region1.count, -region2.count));
+  }
+  friend Region max(const Region &region1, const Region &region2) {
+    using std::max;
+    return Region(max(region1.count, region2.count));
+  }
+  friend Region min(const Region &region1, const Region &region2) {
+    using std::min;
+    return Region(min(region1.count, region2.count));
+  }
+  friend Region abs_diff(const Region &region1, const Region &region2) {
+    return region1.count <= region2.count ? region2 - region1
+                                          : region1 - region2;
+  }
+  friend Region sub_sat(const Region &region1, const Region &region2) {
+    return region1.count <= region2.count ? Region(V(0)) : region1 - region2;
   }
 
+  friend Region operator&(const Region &region1, const Region &region2) {
+    return min(region1, region2);
+  }
+  friend Region operator|(const Region &region1, const Region &region2) {
+    return max(region1, region2);
+  }
+  friend Region operator^(const Region &region1, const Region &region2) {
+    return abs_diff(region1, region2);
+  }
+
+  Region &operator+=(const Region &region) { return *this = *this + region; }
+  Region &operator-=(const Region &region) { return *this = *this - region; }
   Region &operator&=(const Region &region) { return *this = *this & region; }
   Region &operator|=(const Region &region) { return *this = *this | region; }
   Region &operator^=(const Region &region) { return *this = *this ^ region; }
-  Region &operator-=(const Region &region) { return *this = *this - region; }
 
   friend Region intersection(const Region &region1, const Region &region2) {
     return region1 & region2;
   }
-  friend Region setunion(const Region &region1, const Region &region2) {
+  friend Region set_union(const Region &region1, const Region &region2) {
     return region1 | region2;
   }
   friend Region symmetric_difference(const Region &region1,
                                      const Region &region2) {
     return region1 ^ region2;
   }
-  friend Region difference(const Region &region1, const Region &region2) {
-    return region1 - region2;
+  friend Region set_difference(const Region &region1, const Region &region2) {
+    return sub_sat(region1, region2);
   }
 
   // Set comparison operators
@@ -174,7 +210,7 @@ public:
 
   // Comparison operators
   friend bool operator<=(const Region &region1, const Region &region2) {
-    return (region1 - region2).empty();
+    return set_difference(region1, region2).empty();
   }
   friend bool operator>=(const Region &region1, const Region &region2) {
     return region2 <= region1;
@@ -186,33 +222,34 @@ public:
     return region2 < region1;
   }
 
-  bool issubset(const Region &region) const { return *this <= region; }
-  bool issuperset(const Region &region) const { return *this >= region; }
-  bool is_strict_subset(const Region &region) const { return *this < region; }
-  bool is_strict_superset(const Region &region) const { return *this > region; }
+  bool is_subset_of(const Region &region) const { return *this <= region; }
+  bool is_superset_of(const Region &region) const { return *this >= region; }
+  bool is_strict_subset_of(const Region &region) const {
+    return *this < region;
+  }
+  bool is_strict_superset_of(const Region &region) const {
+    return *this > region;
+  }
 
   friend std::ostream &operator<<(std::ostream &os, const Region &region) {
-    os << "{";
-    if (!region.empty())
-      os << "(1)";
-    os << "}";
-    return os;
+    return os << "{(" << region.count << ")}";
   }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 
-template <typename T> class Region<T, 1> {
+template <typename T, typename V> class Region<T, 1, V> {
 public:
   constexpr static std::size_t D = 1;
 
 private:
-  typedef Region<T, D - 1> Subregion; // This is essentially a bool
-  typedef std::vector<T> Subregions;
+  // A 0d subregion is essentially a value of type V
+  typedef Region<T, D - 1, V> Subregion;
+  typedef std::vector<std::pair<T, Subregion>> Subregions;
   Subregions subregions;
 
-  friend class std::equal_to<Region<T, D>>;
-  friend class std::less<Region<T, D>>;
+  friend class std::equal_to<Region<T, D, V>>;
+  friend class std::less<Region<T, D, V>>;
 
 public:
   typedef typename Point<T, D>::value_type value_type;
@@ -222,14 +259,27 @@ public:
    */
   bool invariant() const {
     const size_type nboxes = subregions.size();
-    for (size_type i = 1; i < nboxes; ++i)
-      // The subregions must be ordered
-      if (!(subregions[i - 1] < subregions[i])) {
+    // The subregions must not be empty, and their invariants must hold
+    for (const auto &pos_subregion : subregions) {
+      const auto &subregion = pos_subregion.second;
+      if (subregion.empty() || !subregion.invariant()) {
         assert(false);
         return false;
       }
-    // There must be an even number of subregions
-    if (subregions.size() % 2 != 0) {
+    }
+    for (size_type i = 1; i < nboxes; ++i)
+      // The subregions must be ordered
+      if (!(subregions[i - 1].first < subregions[i].first)) {
+        assert(false);
+        return false;
+      }
+    // The sum of the values must be zero
+    V value = 0;
+    for (const auto &pos_reg : subregions) {
+      const auto &subregion = pos_reg.second;
+      value = helpers::add(value, subregion.value());
+    }
+    if (!(value == V(0))) {
       assert(false);
       return false;
     }
@@ -255,105 +305,144 @@ public:
   Region(const Box<T, D> &b) {
     if (b.empty())
       return;
-    subregions = {b.lower()[0], b.upper()[0]};
+    subregions = {{b.lower()[0], Subregion(V(1))},
+                  {b.upper()[0], Subregion(V(-1))}};
     check_invariant();
   }
 
-  template <typename U>
-  Region(const Region<U, D> &region) : subregions(region.subregions.size()) {
+  template <typename U, typename W = V>
+  Region(const Region<U, D, W> &region) : subregions(region.subregions.size()) {
     std::transform(region.subregions.begin(), region.subregions.end(),
-                   subregions.begin(),
-                   [](const auto &subregion) { return Subregion(subregion); });
+                   subregions.begin(), [&](const auto &pos_subregion) {
+                     T pos(pos_subregion.first);
+                     Subregion subregion(pos_subregion.second);
+                     subregions.emplace_back(pos, std::move(subregion));
+                   });
+    check_invariant();
   }
 
 private:
-  static std::vector<T> subregions_from_bounds(std::vector<T> lbnds,
-                                               std::vector<T> ubnds) {
-    const std::size_t nboxes = lbnds.size();
-    assert(ubnds.size() == nboxes);
-    std::vector<T> subregions;
-    if (nboxes == 0)
+  static std::vector<std::pair<T, Subregion>>
+  subregions_from_steps(std::vector<std::pair<T, V>> steps) {
+    std::vector<std::pair<T, Subregion>> subregions;
+    if (steps.empty() == 0)
       return subregions;
-    std::sort(lbnds.begin(), lbnds.end());
-    std::sort(ubnds.begin(), ubnds.end());
-    std::size_t nactive = 0;
-    std::size_t lpos = 0, upos = 0;
-    while (lpos < nboxes) {
-      const auto lbnd = lbnds[lpos];
-      assert(upos < nboxes);
-      const auto ubnd = ubnds[upos];
-      // Process lower bounds before upper bounds
-      if (lbnd <= ubnd) {
-        if (nactive == 0)
-          subregions.push_back(lbnd);
-        ++nactive;
-        ++lpos;
-      } else {
-        assert(nactive > 0);
-        --nactive;
-        if (nactive == 0)
-          subregions.push_back(ubnd);
-        ++upos;
+    subregions.reserve(steps.size());
+    std::sort(steps.begin(), steps.end(), [](const auto &p1, const auto &p2) {
+      return p1.first < p2.first;
+    });
+    for (const auto &pos_val : steps) {
+      const auto &pos = pos_val.first;
+      const auto &delta = pos_val.second;
+      if (delta != V(0)) {
+        if (!subregions.empty()) {
+          const auto &old_pos = subregions.back().first;
+          if (old_pos == pos) {
+            // When two positions are the same, add their values
+            old_pos = helpers::add(old_pos, delta);
+            if (old_pos == V(0))
+              // Remove empty values
+              subregions.pop();
+          }
+        } else {
+          subregions.emplace_back(pos, delta);
+        }
       }
     }
-    assert(nactive > 0);
-    assert(upos < nboxes);
-    assert(upos + nactive == nboxes);
-    subregions.push_back(ubnds[nboxes - 1]);
-#if REGIONS_DEBUG
-    // TODO: turn this into a test case
-    {
-      Region reg;
-      for (std::size_t i = 0; i < nboxes; ++i)
-        reg |= Region(Box<T, D>(Point<T, 1>{lbnds[i]}, Point<T, 1>{ubnds[i]}));
-      assert(subregions == reg.subregions);
-    }
-#endif
     return subregions;
   }
 
 public:
-  Region(const std::vector<Box<T, D>> &boxes) {
-    std::vector<T> lbnds, ubnds;
-    lbnds.reserve(boxes.size());
-    ubnds.reserve(boxes.size());
-    for (const auto &box : boxes) {
-      lbnds.push_back(box.lower()[0]);
-      ubnds.push_back(box.upper()[0]);
+  Region(const std::vector<std::pair<Box<T, D>, V>> &boxes) {
+    std::vector<std::pair<T, V>> steps;
+    steps.reserve(2 * boxes.size());
+    for (const auto &box_val : boxes) {
+      const auto &box = box_val.first;
+      const auto &value = box_val.second;
+      steps.push_back(box.lower()[0], value);
+      steps.push_back(box.upper()[0], -value);
     }
-    subregions = subregions_from_bounds(std::move(lbnds), std::move(ubnds));
+    subregions = subregions_from_steps(std::move(steps));
     check_invariant();
   }
-  operator std::vector<Box<T, D>>() const {
-    std::vector<Box<T, D>> res;
-    res.reserve(subregions.size() / 2);
-    auto iter = subregions.begin();
-    const auto end = subregions.end();
-    while (iter != end) {
-      const auto pos1 = *iter++;
-      const auto pos2 = *iter++;
-      res.emplace_back(Box<T, D>(Point<T, D>{pos1}, Point<T, D>{pos2}));
+
+  Region(const std::vector<Box<T, D>> &boxes) {
+    std::vector<std::pair<T, V>> steps;
+    steps.reserve(2 * boxes.size());
+    for (const auto &box : boxes) {
+      steps.push_back(box.lower()[0], V(1));
+      steps.push_back(box.upper()[0], -V(1));
     }
+    subregions = subregions_from_steps(std::move(steps));
 #if REGIONS_DEBUG
     // TODO: turn this into a test case
-    assert(std::is_sorted(res.begin(), res.end()));
+    {
+      Region reg;
+      for (const auto &box : boxes)
+        reg |= Region(box);
+      assert(*this == reg);
+    }
+#endif
+    check_invariant();
+  }
+
+  operator std::vector<std::pair<Box<T, D>, V>>() const {
+    std::vector<std::pair<Box<T, D>, V>> res;
+    auto iter = subregions.begin();
+    const auto end = subregions.end();
+    if (iter == end)
+      return res;
+    auto pos_reg = *iter++;
+    V value = pos_reg.second.value();
+    while (iter != end) {
+      auto new_pos_reg = *iter++;
+      V new_value = helpers::add(value, new_pos_reg.second.value());
+      if (value != V(0))
+        res.emplace_back(Box<T, D>(Point<T, D>{pos_reg.first},
+                                   Point<T, D>{new_pos_reg.first}),
+                         value);
+      value = std::move(new_value);
+      pos_reg = std::move(new_pos_reg);
+    }
+    assert(value == V(0));
+    return res;
+  }
+
+  operator std::vector<Box<T, D>>() const {
+    std::vector<Box<T, D>> res;
+    auto iter = subregions.begin();
+    const auto end = subregions.end();
+    if (iter == end)
+      return res;
+    auto pos_reg = *iter++;
+    V value = pos_reg.second.value();
+    while (iter != end) {
+      auto new_pos_reg = *iter++;
+      V new_value = helpers::add(value, new_pos_reg.second.value());
+      assert(new_value == V(0) || new_value == V(1));
+      if (value != V(0))
+        res.push_back(Box<T, D>(Point<T, D>{pos_reg.first},
+                                Point<T, D>{new_pos_reg.first}));
+      value = std::move(new_value);
+      pos_reg = std::move(new_pos_reg);
+    }
+    assert(value == V(0));
+#if REGIONS_DEBUG
+    // TODO: turn this into a test case
     {
       Region reg;
       for (const auto &b : res) {
         assert(isdisjoint(Region(b), reg));
         reg |= b;
       }
-      if (!(reg == *this)) {
-        std::cout << "subregions=[";
-        for (const auto &sr : subregions)
-          std::cout << sr << ",";
-        std::cout << "]\n";
-        std::cout << "reg=[";
-        for (const auto &r : reg.subregions)
-          std::cout << r << ",";
-        std::cout << "]\n";
-      }
       assert(reg == *this);
+    }
+    {
+      std::vector<std::pair<Box<T, D>, V>> res_val(*this);
+      std::vector<Box<T, D>> res2(res_val.size());
+      std::transform(res_val.begin(), res_val.end(), res2.begin(),
+                     [](const auto &box_val) { return box_val.first; });
+      assert(res2 == res);
     }
 #endif
     return res;
@@ -363,8 +452,9 @@ private:
   template <typename F>
   friend void traverse_subregions(const F &f, const Region &region) {
     Subregion decoded_subregion;
-    for (const auto &pos : region.subregions) {
-      decoded_subregion ^= Subregion(Point<T, D - 1>());
+    for (const auto &pos_reg : region.subregions) {
+      const T &pos = pos_reg.first;
+      decoded_subregion += pos_reg.second;
       f(pos, decoded_subregion);
     }
     assert(decoded_subregion.empty());
@@ -380,14 +470,16 @@ private:
     const auto end1 = region1.subregions.end();
     const auto end2 = region2.subregions.end();
     while (iter1 != end1 && iter2 != end2) {
-      const T next_pos1 = *iter1;
-      const T next_pos2 = *iter2;
+      const T &next_pos1 = iter1->first;
+      const T &next_pos2 = iter2->first;
       using std::min;
       const T pos = min(next_pos1, next_pos2);
       const bool active1 = next_pos1 == pos;
       const bool active2 = next_pos2 == pos;
-      decoded_subregion1 ^= Subregion(active1);
-      decoded_subregion2 ^= Subregion(active2);
+      if (active1)
+        decoded_subregion1 += iter1->second;
+      if (active2)
+        decoded_subregion2 += iter2->second;
       f(pos, decoded_subregion1, decoded_subregion2);
       if (active1)
         ++iter1;
@@ -395,13 +487,13 @@ private:
         ++iter2;
     }
     for (; iter1 != end1; ++iter1) {
-      const T pos = *iter1;
-      decoded_subregion1 ^= Subregion(Point<T, D - 1>());
+      const T pos = iter1->first;
+      decoded_subregion1 += iter1->second;
       f(pos, decoded_subregion1, Subregion());
     }
     for (; iter2 != end2; ++iter2) {
-      const T pos = *iter2;
-      decoded_subregion2 ^= Subregion(Point<T, D - 1>());
+      const T pos = iter2->first;
+      decoded_subregion2 += iter2->second;
       f(pos, Subregion(), decoded_subregion2);
     }
     assert(decoded_subregion1.empty());
@@ -415,9 +507,9 @@ private:
     traverse_subregions(
         [&](const T pos, const Subregion &decoded_subregion1) {
           auto decoded_subregion_res = op(decoded_subregion1);
-          auto subregion = decoded_subregion_res ^ old_decoded_subregion;
-          if (!subregion.empty())
-            res.subregions.push_back(pos);
+          auto subregion = decoded_subregion_res - old_decoded_subregion;
+          if (subregion.value() != V(0))
+            res.subregions.emplace_back(pos, subregion);
           old_decoded_subregion = decoded_subregion_res;
         },
         region1);
@@ -436,9 +528,9 @@ private:
             const Subregion &decoded_subregion2) {
           auto decoded_subregion_res =
               op(decoded_subregion1, decoded_subregion2);
-          auto subregion = decoded_subregion_res ^ old_decoded_subregion;
-          if (!subregion.empty())
-            res.subregions.push_back(pos);
+          auto subregion = decoded_subregion_res - old_decoded_subregion;
+          if (subregion.value() != V(0))
+            res.subregions.emplace_back(pos, subregion);
           old_decoded_subregion = std::move(decoded_subregion_res);
         },
         region1, region2);
@@ -490,8 +582,8 @@ public:
   Region operator>>(const Point<T, D> &d) const {
     Region nr;
     nr.subregions.reserve(subregions.size());
-    for (const auto &pos : subregions)
-      nr.subregions.push_back(pos + d[0]);
+    for (const auto &pos_reg : subregions)
+      nr.subregions.emplace_back(pos_reg.first + d[0], pos_reg.second);
     check_invariant();
     return nr;
   }
@@ -503,8 +595,10 @@ public:
       return empty() ? Region() : Region(Point<T, D>());
     Region nr;
     nr.subregions.reserve(subregions.size());
-    for (const auto &pos : subregions)
-      nr.subregions.push_back(pos * s[0]);
+    for (const auto &pos_reg : subregions)
+      nr.subregions.emplace_back(
+          pos_reg.first * s[0],
+          Subregion((s[0] >= 0 ? T(1) : T(-1)) * pos_reg.second.value()));
     if (s[0] < 0)
       std::reverse(nr.subregions.begin(), nr.subregions.end());
     check_invariant();
@@ -568,8 +662,61 @@ public:
   friend Box<T, D> bounding_box(const Region &region) {
     if (region.empty())
       return Box<T, D>();
-    return Box<T, D>(Point<T, D>{*region.subregions.begin()},
-                     Point<T, D>{*(region.subregions.end() - 1)});
+    return Box<T, D>(Point<T, D>{region.subregions.begin()->first},
+                     Point<T, D>{region.subregions.rbegin()->first});
+  }
+
+  friend Region operator+(const Region &region) {
+    return unary_operator([](const Subregion &set) { return +set; }, region);
+  }
+  friend Region operator-(const Region &region) {
+    return unary_operator([](const Subregion &set) { return -set; }, region);
+  }
+  friend Region abs(const Region &region) {
+    return unary_operator([](const Subregion &set) { return abs(set); },
+                          region);
+  }
+  friend Region relu(const Region &region) {
+    return unary_operator([](const Subregion &set) { return relu(set); },
+                          region);
+  }
+  friend Region operator+(const Region &region1, const Region &region2) {
+    return binary_operator([](const Subregion &set1,
+                              const Subregion &set2) { return set1 + set2; },
+                           region1, region2);
+  }
+  friend Region operator-(const Region &region1, const Region &region2) {
+    return binary_operator([](const Subregion &set1,
+                              const Subregion &set2) { return set1 - set2; },
+                           region1, region2);
+  }
+  friend Region max(const Region &region1, const Region &region2) {
+    return binary_operator(
+        [](const Subregion &set1, const Subregion &set2) {
+          return max(set1, set2);
+        },
+        region1, region2);
+  }
+  friend Region min(const Region &region1, const Region &region2) {
+    return binary_operator(
+        [](const Subregion &set1, const Subregion &set2) {
+          return min(set1, set2);
+        },
+        region1, region2);
+  }
+  friend Region abs_diff(const Region &region1, const Region &region2) {
+    return binary_operator(
+        [](const Subregion &set1, const Subregion &set2) {
+          return abs_diff(set1, set2);
+        },
+        region1, region2);
+  }
+  friend Region sub_sat(const Region &region1, const Region &region2) {
+    return binary_operator(
+        [](const Subregion &set1, const Subregion &set2) {
+          return sub_sat(set1, set2);
+        },
+        region1, region2);
   }
 
   friend Region operator&(const Region &region1, const Region &region2) {
@@ -587,29 +734,25 @@ public:
                               const Subregion &set2) { return set1 ^ set2; },
                            region1, region2);
   }
-  friend Region operator-(const Region &region1, const Region &region2) {
-    return binary_operator([](const Subregion &set1,
-                              const Subregion &set2) { return set1 - set2; },
-                           region1, region2);
-  }
 
+  Region &operator+=(const Region &region) { return *this = *this + region; }
+  Region &operator-=(const Region &region) { return *this = *this - region; }
   Region &operator&=(const Region &region) { return *this = *this & region; }
   Region &operator|=(const Region &region) { return *this = *this | region; }
   Region &operator^=(const Region &region) { return *this = *this ^ region; }
-  Region &operator-=(const Region &region) { return *this = *this - region; }
 
   friend Region intersection(const Region &region1, const Region &region2) {
     return region1 & region2;
   }
-  friend Region setunion(const Region &region1, const Region &region2) {
+  friend Region set_union(const Region &region1, const Region &region2) {
     return region1 | region2;
   }
   friend Region symmetric_difference(const Region &region1,
                                      const Region &region2) {
     return region1 ^ region2;
   }
-  friend Region difference(const Region &region1, const Region &region2) {
-    return region1 - region2;
+  friend Region set_difference(const Region &region1, const Region &region2) {
+    return sub_sat(region1, region2);
   }
 
   // Set comparison operators
@@ -620,7 +763,7 @@ public:
 
   // Comparison operators
   friend bool operator<=(const Region &region1, const Region &region2) {
-    return (region1 - region2).empty();
+    return set_difference(region1, region2).empty();
   }
   friend bool operator>=(const Region &region1, const Region &region2) {
     return region2 <= region1;
@@ -632,11 +775,31 @@ public:
     return region2 < region1;
   }
 
-  bool issubset(const Region &region) const { return *this <= region; }
-  bool issuperset(const Region &region) const { return *this >= region; }
-  bool is_strict_subset(const Region &region) const { return *this < region; }
-  bool is_strict_superset(const Region &region) const { return *this > region; }
+  bool is_subset_of(const Region &region) const { return *this <= region; }
+  bool is_superset_of(const Region &region) const { return *this >= region; }
+  bool is_strict_subset_of(const Region &region) const {
+    return *this < region;
+  }
+  bool is_strict_superset_of(const Region &region) const {
+    return *this > region;
+  }
 
+  template <typename VV = V,
+            std::enable_if_t<!std::is_same_v<VV, bool>> * = nullptr>
+  friend std::ostream &operator<<(std::ostream &os, const Region &region) {
+    os << "{";
+    const std::vector<std::pair<Box<T, D>, V>> boxes(region);
+    for (std::size_t i = 0; i < boxes.size(); ++i) {
+      if (i > 0)
+        os << ",";
+      os << boxes[i].first << ":" << boxes[i].second;
+    }
+    os << "}";
+    return os;
+  }
+
+  template <typename VV = V,
+            std::enable_if_t<std::is_same_v<VV, bool>> * = nullptr>
   friend std::ostream &operator<<(std::ostream &os, const Region &region) {
     os << "{";
     const std::vector<Box<T, D>> boxes(region);
@@ -652,13 +815,13 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////
 
-template <typename T, std::size_t D> class Region {
-  typedef Region<T, D - 1> Subregion;
+template <typename T, std::size_t D, typename V> class Region {
+  typedef Region<T, D - 1, V> Subregion;
   typedef std::vector<std::pair<T, Subregion>> Subregions;
   Subregions subregions;
 
-  friend class std::equal_to<Region<T, D>>;
-  friend class std::less<Region<T, D>>;
+  friend class std::equal_to<Region<T, D, V>>;
+  friend class std::less<Region<T, D, V>>;
 
 public:
   typedef typename Point<T, D>::value_type value_type;
@@ -703,15 +866,15 @@ public:
     check_invariant();
   }
 
-  template <typename U>
-  Region(const Region<U, D> &region) : subregions(region.subregions.size()) {
+  template <typename U, typename W = V>
+  Region(const Region<U, D, W> &region) : subregions(region.subregions.size()) {
     std::transform(region.subregions.begin(), region.subregions.end(),
                    subregions.begin(), [&](const auto &pos_subregion) {
                      T pos(pos_subregion.first);
                      Subregion subregion(pos_subregion.second);
-                     subregions.emplace_back(
-                         std::make_pair(pos, std::move(subregion)));
+                     subregions.emplace_back(pos, std::move(subregion));
                    });
+    check_invariant();
   }
 
 private:
@@ -742,13 +905,13 @@ public:
     check_invariant();
   }
 
-  operator std::vector<Box<T, D>>() const {
-    std::vector<Box<T, D>> res;
-    std::map<Box<T, D - 1>, T> old_subboxes;
+  operator std::vector<std::pair<Box<T, D>, V>>() const {
+    std::vector<std::pair<Box<T, D>, V>> res;
+    std::map<std::pair<Box<T, D - 1>, V>, T> old_subboxes;
     traverse_subregions(
-        [&](const T pos, const Subregion &subregion) {
+        [&](const T &pos, const Subregion &subregion) {
           // Convert subregion to boxes
-          const std::vector<Box<T, D - 1>> subboxes1(subregion);
+          const std::vector<std::pair<Box<T, D - 1>, V>> subboxes1(subregion);
 
           auto iter0 = old_subboxes.begin();
           auto iter1 = subboxes1.begin();
@@ -757,36 +920,106 @@ public:
 #if REGIONS_DEBUG
           assert(is_sorted(iter1, end1));
 #endif
-          std::map<Box<T, D - 1>, T> subboxes;
+          std::map<std::pair<Box<T, D - 1>, V>, T> subboxes;
           while (iter0 != end0 || iter1 != end1) {
             bool active0 = iter0 != end0;
             bool active1 = iter1 != end1;
-            Box<T, D - 1> dummy;
-            const Box<T, D - 1> &subbox0 = active0 ? iter0->first : dummy;
-            const Box<T, D - 1> &subbox1 = active1 ? *iter1 : dummy;
+            const std::pair<Box<T, D - 1>, V> *const subbox0 =
+                active0 ? &iter0->first : nullptr;
+            const std::pair<Box<T, D - 1>, V> *const subbox1 =
+                active1 ? &*iter1 : nullptr;
             // When both subboxes are active, keep only the first (as determined
             // by less<>)
-            std::equal_to<Subregion> eq;
-            std::less<Subregion> lt;
+            std::equal_to<std::pair<Box<T, D - 1>, V>> eq;
+            std::less<std::pair<Box<T, D - 1>, V>> lt;
             if (active0 && active1) {
-              active0 = !lt(subbox0, subbox1);
-              active1 = !lt(subbox1, subbox0);
+              active0 = !lt(*subbox0, *subbox1);
+              active1 = !lt(*subbox1, *subbox0);
             }
 
-            if (active0 && active1 && eq(subbox0, subbox1)) {
+            if (active0 && active1) {
+              assert(eq(*subbox0, *subbox1));
               // The current bbox continues unchanged -- keep it
-              const T old_pos = iter0->second;
-              subboxes[subbox1] = old_pos;
+              const T &old_pos = iter0->second;
+              subboxes[*subbox1] = old_pos;
             } else {
               if (active0) {
                 // The current box changed; finalize it
-                const T old_pos = iter0->second;
-                res.push_back(Box<T, D>(subbox0.lower().insert(D - 1, old_pos),
-                                        subbox0.upper().insert(D - 1, pos)));
+                const T &old_pos = iter0->second;
+                const Box<T, D - 1> &box = subbox0->first;
+                const V &value = subbox0->second;
+                if (value != V(0))
+                  res.emplace_back(Box<T, D>(box.lower().insert(D - 1, old_pos),
+                                             box.upper().insert(D - 1, pos)),
+                                   value);
               }
               if (active1)
                 // There is a new box; add it
-                subboxes[subbox1] = pos;
+                subboxes[*subbox1] = pos;
+            }
+
+            if (active0)
+              ++iter0;
+            if (active1)
+              ++iter1;
+          }
+          old_subboxes = std::move(subboxes);
+        },
+        *this);
+    assert(old_subboxes.empty());
+    return res;
+  }
+
+  operator std::vector<Box<T, D>>() const {
+    std::vector<Box<T, D>> res;
+    std::map<std::pair<Box<T, D - 1>, V>, T> old_subboxes;
+    traverse_subregions(
+        [&](const T &pos, const Subregion &subregion) {
+          // Convert subregion to boxes
+          const std::vector<std::pair<Box<T, D - 1>, V>> subboxes1(subregion);
+
+          auto iter0 = old_subboxes.begin();
+          auto iter1 = subboxes1.begin();
+          const auto end0 = old_subboxes.end();
+          const auto end1 = subboxes1.end();
+#if REGIONS_DEBUG
+          assert(is_sorted(iter1, end1));
+#endif
+          std::map<std::pair<Box<T, D - 1>, V>, T> subboxes;
+          while (iter0 != end0 || iter1 != end1) {
+            bool active0 = iter0 != end0;
+            bool active1 = iter1 != end1;
+            const std::pair<Box<T, D - 1>, V> *const subbox0 =
+                active0 ? &iter0->first : nullptr;
+            const std::pair<Box<T, D - 1>, V> *const subbox1 =
+                active1 ? &*iter1 : nullptr;
+            // When both subboxes are active, keep only the first (as determined
+            // by less<>)
+            std::equal_to<std::pair<Box<T, D - 1>, V>> eq;
+            std::less<std::pair<Box<T, D - 1>, V>> lt;
+            if (active0 && active1) {
+              active0 = !lt(*subbox0, *subbox1);
+              active1 = !lt(*subbox1, *subbox0);
+            }
+
+            if (active0 && active1) {
+              assert(eq(*subbox0, *subbox1));
+              // The current bbox continues unchanged -- keep it
+              const T &old_pos = iter0->second;
+              subboxes[*subbox1] = old_pos;
+            } else {
+              if (active0) {
+                // The current box changed; finalize it
+                const T &old_pos = iter0->second;
+                const Box<T, D - 1> &box = subbox0->first;
+                const V &value = subbox0->second;
+                if (value != V(0))
+                  res.push_back(Box<T, D>(box.lower().insert(D - 1, old_pos),
+                                          box.upper().insert(D - 1, pos)));
+              }
+              if (active1)
+                // There is a new box; add it
+                subboxes[*subbox1] = pos;
             }
 
             if (active0)
@@ -808,6 +1041,13 @@ public:
         reg |= b;
       }
       assert(reg == *this);
+    }
+    {
+      std::vector<std::pair<Box<T, D>, V>> res_val(*this);
+      std::vector<Box<T, D>> res2(res_val.size());
+      std::transform(res_val.begin(), res_val.end(), res2.begin(),
+                     [](const auto &box_val) { return box_val.first; });
+      assert(res2 == res);
     }
 #endif
     return res;
@@ -1100,14 +1340,14 @@ public:
   friend Region intersection(const Region &region1, const Region &region2) {
     return region1 & region2;
   }
-  friend Region setunion(const Region &region1, const Region &region2) {
+  friend Region set_union(const Region &region1, const Region &region2) {
     return region1 | region2;
   }
   friend Region symmetric_difference(const Region &region1,
                                      const Region &region2) {
     return region1 ^ region2;
   }
-  friend Region difference(const Region &region1, const Region &region2) {
+  friend Region set_difference(const Region &region1, const Region &region2) {
     return region1 - region2;
   }
 
@@ -1119,7 +1359,7 @@ public:
 
   // Comparison operators
   friend bool operator<=(const Region &region1, const Region &region2) {
-    return (region1 - region2).empty();
+    return set_difference(region1, region2).empty();
   }
   friend bool operator>=(const Region &region1, const Region &region2) {
     return region2 <= region1;
@@ -1131,10 +1371,14 @@ public:
     return region2 < region1;
   }
 
-  bool issubset(const Region &region) const { return *this <= region; }
-  bool issuperset(const Region &region) const { return *this >= region; }
-  bool is_strict_subset(const Region &region) const { return *this < region; }
-  bool is_strict_superset(const Region &region) const { return *this > region; }
+  bool is_subset_of(const Region &region) const { return *this <= region; }
+  bool is_superset_of(const Region &region) const { return *this >= region; }
+  bool is_strict_subset_of(const Region &region) const {
+    return *this < region;
+  }
+  bool is_strict_superset_of(const Region &region) const {
+    return *this > region;
+  }
 
   friend std::ostream &operator<<(std::ostream &os, const Region &region) {
     os << "{";
@@ -1154,38 +1398,40 @@ public:
 
 namespace std {
 
-template <typename T, std::size_t D>
-struct equal_to<openPMD::Regions::Region<T, D>>;
+template <typename T, std::size_t D, typename V>
+struct equal_to<openPMD::Regions::Region<T, D, V>>;
 
-template <typename T> struct equal_to<openPMD::Regions::Region<T, 0>> {
-  constexpr bool operator()(const openPMD::Regions::Region<T, 0> &x,
-                            const openPMD::Regions::Region<T, 0> &y) const {
-    return x.is_full == y.is_full;
+template <typename T, typename V>
+struct equal_to<openPMD::Regions::Region<T, 0, V>> {
+  constexpr bool operator()(const openPMD::Regions::Region<T, 0, V> &x,
+                            const openPMD::Regions::Region<T, 0, V> &y) const {
+    return x.count == y.count;
   }
 };
 
-template <typename T, std::size_t D>
-struct equal_to<openPMD::Regions::Region<T, D>> {
-  constexpr bool operator()(const openPMD::Regions::Region<T, D> &x,
-                            const openPMD::Regions::Region<T, D> &y) const {
+template <typename T, std::size_t D, typename V>
+struct equal_to<openPMD::Regions::Region<T, D, V>> {
+  constexpr bool operator()(const openPMD::Regions::Region<T, D, V> &x,
+                            const openPMD::Regions::Region<T, D, V> &y) const {
     return openPMD::Regions::helpers::vector_eq(x.subregions, y.subregions);
   }
 };
 
-template <typename T, std::size_t D>
-struct less<openPMD::Regions::Region<T, D>>;
+template <typename T, std::size_t D, typename V>
+struct less<openPMD::Regions::Region<T, D, V>>;
 
-template <typename T> struct less<openPMD::Regions::Region<T, 0>> {
-  constexpr bool operator()(const openPMD::Regions::Region<T, 0> &x,
-                            const openPMD::Regions::Region<T, 0> &y) const {
-    return x.is_full < y.is_full;
+template <typename T, typename V>
+struct less<openPMD::Regions::Region<T, 0, V>> {
+  constexpr bool operator()(const openPMD::Regions::Region<T, 0, V> &x,
+                            const openPMD::Regions::Region<T, 0, V> &y) const {
+    return x.count < y.count;
   }
 };
 
-template <typename T, std::size_t D>
-struct less<openPMD::Regions::Region<T, D>> {
-  constexpr bool operator()(const openPMD::Regions::Region<T, D> &x,
-                            const openPMD::Regions::Region<T, D> &y) const {
+template <typename T, std::size_t D, typename V>
+struct less<openPMD::Regions::Region<T, D, V>> {
+  constexpr bool operator()(const openPMD::Regions::Region<T, D, V> &x,
+                            const openPMD::Regions::Region<T, D, V> &y) const {
     return openPMD::Regions::helpers::vector_lt(x.subregions, y.subregions);
   }
 };

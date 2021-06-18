@@ -18,6 +18,14 @@ namespace helpers {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Add two numbers with wrap-around
+template <typename T> constexpr T add(const T &x, const T &y) {
+  return T(std::make_unsigned_t<T>(x) + std::make_unsigned_t<T>(y));
+}
+constexpr bool add(bool x, bool y) { return x ^ y; }
+
+////////////////////////////////////////////////////////////////////////////////
+
 // Combine hash values
 template <typename T> std::size_t hash_combine(std::size_t seed, const T &x) {
   std::hash<T> h;
