@@ -258,12 +258,13 @@ void add_array_type(jlcxx::Module &mod, const std::string &name) {
   //     .method("getindex1",
   //             [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
   // jlcxx::stl::apply_stl<std::array<T, N>>(mod);
-  mod.add_type<struct_array<T, N>>(name)
+  mod.add_type<struct_array<T, N>>(name,
+                                   jlcxx::julia_type("AbstractVector", "Base"))
       .template constructor<>()
       .template constructor<const struct_array<T, N> &>()
       .method("size1",
               [](const struct_array<T, N> &a) { return a.elts.size(); })
-      .method("getindex1", [](const struct_array<T, N> &a, std::size_t n) {
+      .method("getindex1", [](const struct_array<T, N> &a, std::size_t n) -> T {
         return a.elts[n];
       });
 }
