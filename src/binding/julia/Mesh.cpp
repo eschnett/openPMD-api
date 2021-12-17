@@ -37,7 +37,8 @@ void define_julia_Mesh(jlcxx::Module &mod) {
 
   // These two functions come from our superclass
   // BaseRecord<MeshRecordComponent>. We declare them as if they were our own.
-  type.method("cxx_unit_dimension", &Mesh::unitDimension);
+#warning "TODO7"
+  // type.method("cxx_unit_dimension", &Mesh::unitDimension);
   type.method("cxx_isscalar", &Mesh::scalar);
 
   type.method("cxx_geometry", &Mesh::geometry);
