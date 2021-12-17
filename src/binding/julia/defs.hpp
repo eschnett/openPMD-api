@@ -32,7 +32,7 @@ template <> struct sized_uint<8> { using type = std::uint64_t; };
 template <std::size_t I> using sized_uint_t = typename sized_uint<I>::type;
 
 #warning "TODO7"
-// template <typename T> using array7 = std::array<T, 7>;
+template <typename T> using array7 = std::array<T, 7>;
 
 /*
  * Generate code fo all openPMD types. Use is e.g. as follows:
@@ -264,9 +264,9 @@ void add_pair_type(jlcxx::Module &mod, const std::string &name) {
 } // namespace
 
 #warning "TODO7"
-// namespace jlcxx {
-// template <> struct IsMirroredType<std::array<double, 7>> : std::false_type {};
-// } // namespace jlcxx
+namespace jlcxx {
+template <> struct IsMirroredType<std::array<double, 7>> : std::false_type {};
+} // namespace jlcxx
 
 // We use one function per header file
 void define_julia_Access(jlcxx::Module &mod);
