@@ -36,10 +36,10 @@ template <std::size_t I> using sized_uint_t = typename sized_uint<I>::type;
 template <typename T, std::size_t N> struct struct_array {
   std::array<T, N> elts;
   struct_array() = default;
-  struct_array(const struct_arrayN &) = default;
-  struct_array(struct_arrayN &&) = default;
-  struct_array &operator=(const struct_arrayN &) = default;
-  struct_array &operator=(struct_arrayN &&) = default;
+  struct_array(const struct_array &) = default;
+  struct_array(struct_array &&) = default;
+  struct_array &operator=(const struct_array &) = default;
+  struct_array &operator=(struct_array &&) = default;
   struct_array(const std::array<T, N> &arr) : elts(arr) {}
   operator std::array<T, N>() const { return elts; }
 };
