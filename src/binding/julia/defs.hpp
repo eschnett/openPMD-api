@@ -32,7 +32,17 @@ template <> struct sized_uint<8> { using type = std::uint64_t; };
 template <std::size_t I> using sized_uint_t = typename sized_uint<I>::type;
 
 #warning "TODO7"
-template <typename T> using array7 = std::array<T, 7>;
+// template <typename T> using array7 = std::array<T, 7>;
+template <typename T, std::size_t N> struct struct_array {
+  std::array<T, N> elts;
+  struct_array() = default;
+  struct_array(const struct_arrayN &) = default;
+  struct_array(struct_arrayN &&) = default;
+  struct_array &operator=(const struct_arrayN &) = default;
+  struct_array &operator=(struct_arrayN &&) = default;
+  struct_array(const std::array<T, N> &arr) : elts(arr) {}
+  operator std::array<T, N>() const { return elts; }
+};
 
 /*
  * Generate code fo all openPMD types. Use is e.g. as follows:
@@ -83,7 +93,7 @@ template <typename T> using array7 = std::array<T, 7>;
   /* MACRO("VEC_CLONG_DOUBLE", Datatype::VEC_CLONG_DOUBLE,                     \
    * std::vector<std::complex<long double>>) */                                \
   MACRO("VEC_STRING", Datatype::VEC_STRING, std::vector<std::string>)          \
-  MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>)                      \
+  MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, struct_array<double, 7>)             \
   MACRO("BOOL", Datatype::BOOL, bool)
 
 #define FORALL_SCALAR_OPENPMD_TYPES(MACRO)                                     \
@@ -105,7 +115,7 @@ template <typename T> using array7 = std::array<T, 7>;
   /* MACRO("CLONG_DOUBLE", Datatype::CLONG_DOUBLE, std::complex<long           \
    * double>) */                                                               \
   MACRO("STRING", Datatype::STRING, std::string)                               \
-  MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>)                      \
+  MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, struct_array<double, 7>)             \
   MACRO("BOOL", Datatype::BOOL, bool)
 
 // This C++ version is a bit more tedious to use than the macro version above
@@ -169,7 +179,7 @@ void forall_openPMD_types(const F &f, Args &&...args) {
   f("VEC_STRING", Datatype::VEC_STRING, std::vector<std::string>{},
     std::forward<Args>(args)...);
 #warning "TODO7"
-  f("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>{},
+  f("ARR_DBL_7", Datatype::ARR_DBL_7, struct_array<double, 7>{},
     std::forward<Args>(args)...);
   f("BOOL", Datatype::BOOL, bool{}, std::forward<Args>(args)...);
 }
@@ -233,14 +243,21 @@ template <typename T> std::shared_ptr<T> capture_vector(std::vector<T> vec) {
 #warning "TODO7"
 template <typename T, std::size_t N>
 void add_array_type(jlcxx::Module &mod, const std::string &name) {
-  mod.add_type<std::array<T, N>>(name)
-      .template constructor<>()
-      .template constructor<const std::array<T, N> &>()
-      .method("size1", &std::array<T, N>::size)
-      .method("getindex1",
-              [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
-#warning "TODO7"
+  // mod.add_type<std::array<T, N>>(name)
+  //     .template constructor<>()
+  //     .template constructor<const std::array<T, N> &>()
+  //     .method("size1", &std::array<T, N>::size)
+  //     .method("getindex1",
+  //             [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
   // jlcxx::stl::apply_stl<std::array<T, N>>(mod);
+  mod.add_type<struct_array<T, N>>(name)
+      .template constructor<>()
+      .template constructor<const struct_array<T, N> &>()
+      .method("size1",
+              [](const struct_array<T, N> &a) { return a.elts.size(); })
+      .method("getindex1", [](const struct_array<T, N> &a, std::size_t n) {
+        return a.elts[n];
+      });
 }
 
 #warning "TODO"
