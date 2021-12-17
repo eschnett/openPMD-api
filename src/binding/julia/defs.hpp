@@ -236,17 +236,18 @@ void add_array_type(jlcxx::Module &mod, const std::string &name) {
       .method("size1", &std::array<T, N>::size)
       .method("getindex1",
               [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
-  jlcxx::stl::apply_stl<std::array<T, N>>(mod);
+#warning "TODO"
+  // jlcxx::stl::apply_stl<std::array<T, N>>(mod);
 }
 
-template <typename T, std::size_t N>
-void map_array_type(jlcxx::Module &mod, const std::string &name) {
-  mod.map_type<std::array<T, N>>(name);
-  mod.method("size1", [](const std::array<T, N> &a) { return a.size(); });
-  mod.method("getindex1",
-             [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
-  jlcxx::stl::apply_stl<std::array<T, N>>(mod);
-}
+// template <typename T, std::size_t N>
+// void map_array_type(jlcxx::Module &mod, const std::string &name) {
+//   mod.map_type<std::array<T, N>>(name);
+//   mod.method("size1", [](const std::array<T, N> &a) { return a.size(); });
+//   mod.method("getindex1",
+//              [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
+//   jlcxx::stl::apply_stl<std::array<T, N>>(mod);
+// }
 
 template <typename T, typename U>
 void add_pair_type(jlcxx::Module &mod, const std::string &name) {
