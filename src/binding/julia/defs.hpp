@@ -237,7 +237,7 @@ void add_array_type(jlcxx::Module &mod, const std::string &name) {
       .method("getindex1",
               [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
 #warning "TODO"
-  // jlcxx::stl::apply_stl<std::array<T, N>>(mod);
+  jlcxx::stl::apply_stl<std::array<T, N>>(mod);
 }
 
 // template <typename T, std::size_t N>
