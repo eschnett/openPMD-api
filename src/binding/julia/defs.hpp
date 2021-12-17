@@ -231,16 +231,16 @@ template <typename T> std::shared_ptr<T> capture_vector(std::vector<T> vec) {
 }
 
 #warning "TODO7"
-// template <typename T, std::size_t N>
-// void add_array_type(jlcxx::Module &mod, const std::string &name) {
-//   mod.add_type<std::array<T, N>>(name)
-//       .template constructor<>()
-//       .template constructor<const std::array<T, N> &>()
-//       .method("size1", &std::array<T, N>::size)
-//       .method("getindex1",
-//               [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
-//   jlcxx::stl::apply_stl<std::array<T, N>>(mod);
-// }
+template <typename T, std::size_t N>
+void add_array_type(jlcxx::Module &mod, const std::string &name) {
+  mod.add_type<std::array<T, N>>(name)
+      .template constructor<>()
+      .template constructor<const std::array<T, N> &>()
+      .method("size1", &std::array<T, N>::size)
+      .method("getindex1",
+              [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
+  // jlcxx::stl::apply_stl<std::array<T, N>>(mod);
+}
 
 // template <typename T, std::size_t N>
 // void map_array_type(jlcxx::Module &mod, const std::string &name) {
