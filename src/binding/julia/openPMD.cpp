@@ -7,9 +7,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
-  add_array_type<double, 7>(mod, "array_double_7");
-#warning "TODO"
-#if 1
+#warning "TODO7"
+  // add_array_type<double, 7>(mod, "array_double_7");
   add_pair_type<std::string, bool>(mod, "pair_string_bool");
 
   define_julia_shared_ptr(mod);
@@ -51,5 +50,4 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
 
   // Handle metadata
   define_julia_version(mod);
-#endif
 }

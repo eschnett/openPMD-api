@@ -31,7 +31,8 @@ template <> struct sized_uint<4> { using type = std::uint32_t; };
 template <> struct sized_uint<8> { using type = std::uint64_t; };
 template <std::size_t I> using sized_uint_t = typename sized_uint<I>::type;
 
-template <typename T> using array7 = std::array<T, 7>;
+#warning "TODO7"
+// template <typename T> using array7 = std::array<T, 7>;
 
 /*
  * Generate code fo all openPMD types. Use is e.g. as follows:
@@ -82,7 +83,7 @@ template <typename T> using array7 = std::array<T, 7>;
   /* MACRO("VEC_CLONG_DOUBLE", Datatype::VEC_CLONG_DOUBLE,                     \
    * std::vector<std::complex<long double>>) */                                \
   MACRO("VEC_STRING", Datatype::VEC_STRING, std::vector<std::string>)          \
-  MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>)                      \
+        /*TODO7 MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>) */    \
   MACRO("BOOL", Datatype::BOOL, bool)
 
 #define FORALL_SCALAR_OPENPMD_TYPES(MACRO)                                     \
@@ -104,7 +105,7 @@ template <typename T> using array7 = std::array<T, 7>;
   /* MACRO("CLONG_DOUBLE", Datatype::CLONG_DOUBLE, std::complex<long           \
    * double>) */                                                               \
   MACRO("STRING", Datatype::STRING, std::string)                               \
-  MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>)                      \
+  /*TODO7 MACRO("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>) */    \
   MACRO("BOOL", Datatype::BOOL, bool)
 
 // This C++ version is a bit more tedious to use than the macro version above
@@ -167,8 +168,9 @@ void forall_openPMD_types(const F &f, Args &&...args) {
   // std::vector<std::complex<long double>>{}, std::forward<Args>(args)...);
   f("VEC_STRING", Datatype::VEC_STRING, std::vector<std::string>{},
     std::forward<Args>(args)...);
-  f("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>{},
-    std::forward<Args>(args)...);
+#warning "TODO7"
+  // f("ARR_DBL_7", Datatype::ARR_DBL_7, array7<double>{},
+  //   std::forward<Args>(args)...);
   f("BOOL", Datatype::BOOL, bool{}, std::forward<Args>(args)...);
 }
 
@@ -228,17 +230,17 @@ template <typename T> std::shared_ptr<T> capture_vector(std::vector<T> vec) {
   }
 }
 
-template <typename T, std::size_t N>
-void add_array_type(jlcxx::Module &mod, const std::string &name) {
-  mod.add_type<std::array<T, N>>(name)
-      .template constructor<>()
-      .template constructor<const std::array<T, N> &>()
-      .method("size1", &std::array<T, N>::size)
-      .method("getindex1",
-              [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
-#warning "TODO"
-  // jlcxx::stl::apply_stl<std::array<T, N>>(mod);
-}
+#warning "TODO7"
+// template <typename T, std::size_t N>
+// void add_array_type(jlcxx::Module &mod, const std::string &name) {
+//   mod.add_type<std::array<T, N>>(name)
+//       .template constructor<>()
+//       .template constructor<const std::array<T, N> &>()
+//       .method("size1", &std::array<T, N>::size)
+//       .method("getindex1",
+//               [](const std::array<T, N> &a, std::size_t n) { return a[n]; });
+//   jlcxx::stl::apply_stl<std::array<T, N>>(mod);
+// }
 
 // template <typename T, std::size_t N>
 // void map_array_type(jlcxx::Module &mod, const std::string &name) {
@@ -261,9 +263,10 @@ void add_pair_type(jlcxx::Module &mod, const std::string &name) {
 
 } // namespace
 
-namespace jlcxx {
-template <> struct IsMirroredType<std::array<double, 7>> : std::false_type {};
-} // namespace jlcxx
+#warning "TODO7"
+// namespace jlcxx {
+// template <> struct IsMirroredType<std::array<double, 7>> : std::false_type {};
+// } // namespace jlcxx
 
 // We use one function per header file
 void define_julia_Access(jlcxx::Module &mod);
