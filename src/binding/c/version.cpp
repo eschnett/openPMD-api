@@ -26,7 +26,19 @@ const char *openPMD_getVersion()
 
 const char *openPMD_getStandard()
 {
-    static const std::string standard = openPMD::getStandard();
+    static const std::string standard = openPMD::getStandardMaximum();
+    return standard.c_str();
+}
+
+const char *openPMD_getStandardDefault()
+{
+    static const std::string standard = openPMD::getStandardDefault();
+    return standard.c_str();
+}
+
+const char *openPMD_getStandardMaximum()
+{
+    static const std::string standard = openPMD::getStandardMaximum();
     return standard.c_str();
 }
 
