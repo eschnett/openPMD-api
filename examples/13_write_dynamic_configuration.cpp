@@ -39,9 +39,6 @@ iteration_encoding = "group_based"
 # The following is only relevant in read mode
 defer_iteration_parsing = true
 
-[adios1.dataset]
-transform = "blosc:compressor=zlib,shuffle=bit,lvl=5;nometa"
-
 [adios2.engine]
 type = "bp4"
 
@@ -124,8 +121,7 @@ chunks = "auto"
         Dataset differentlyCompressedDataset{Datatype::INT, {10}};
         differentlyCompressedDataset.options = differentCompressionSettings;
 
-        auto someMesh = iteration.meshes["differentCompressionSettings"]
-                                        [RecordComponent::SCALAR];
+        auto someMesh = iteration.meshes["differentCompressionSettings"];
         someMesh.resetDataset(differentlyCompressedDataset);
         std::vector<int> dataVec(10, i);
         someMesh.storeChunk(dataVec, {0}, {10});

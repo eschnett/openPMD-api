@@ -20,9 +20,11 @@
  */
 #include "openPMD/Record.hpp"
 #include "openPMD/RecordComponent.hpp"
+#include "openPMD/backend/Attributable.hpp"
 #include "openPMD/backend/BaseRecord.hpp"
 
 #include "openPMD/binding/python/Common.hpp"
+#include "openPMD/binding/python/Container.H"
 #include "openPMD/binding/python/Pickle.hpp"
 #include "openPMD/binding/python/UnitDimension.hpp"
 
@@ -31,6 +33,9 @@
 
 void init_Record(py::module &m)
 {
+    auto py_r_cnt = declare_container<PyRecordContainer, Attributable>(
+        m, "Record_Container");
+
     py::class_<Record, BaseRecord<RecordComponent> > cl(m, "Record");
     cl.def(py::init<Record const &>())
 
@@ -67,8 +72,12 @@ void init_Record(py::module &m)
         .def("set_time_offset", &Record::setTimeOffset<double>)
         .def("set_time_offset", &Record::setTimeOffset<long double>);
     add_pickle(
-        cl, [](openPMD::Series &series, std::vector<std::string> const &group) {
+        cl, [](openPMD::Series series, std::vector<std::string> const &group) {
             uint64_t const n_it = std::stoull(group.at(1));
-            return series.iterations[n_it].particles[group.at(3)][group.at(4)];
+            auto res = series.iterations[n_it].open().particles[group.at(3)]
+                                                               [group.at(4)];
+            return internal::makeOwning(res, std::move(series));
         });
+
+    finalize_container<PyRecordContainer>(py_r_cnt);
 }

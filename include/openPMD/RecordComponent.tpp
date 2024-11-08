@@ -29,6 +29,7 @@
 #include "openPMD/auxiliary/UniquePtr.hpp"
 
 #include <memory>
+#include <type_traits>
 
 namespace openPMD
 {
@@ -171,7 +172,7 @@ RecordComponent::loadChunk(std::shared_ptr<T> data, Offset o, Extent e)
         dRead.extent = extent;
         dRead.dtype = getDatatype();
         dRead.data = std::static_pointer_cast<void>(data);
-        rc.m_chunks.push(IOTask(this, dRead));
+        rc.push_chunk(IOTask(this, dRead));
     }
 }
 
@@ -250,7 +251,7 @@ void RecordComponent::storeChunkRaw(T *ptr, Offset offset, Extent extent)
 
 template <typename T_ContiguousContainer>
 inline typename std::enable_if_t<
-    auxiliary::IsContiguousContainer_v<T_ContiguousContainer> >
+    auxiliary::IsContiguousContainer_v<T_ContiguousContainer>>
 RecordComponent::storeChunk(T_ContiguousContainer &data, Offset o, Extent e)
 {
     uint8_t dim = getDimensionality();
@@ -258,8 +259,17 @@ RecordComponent::storeChunk(T_ContiguousContainer &data, Offset o, Extent e)
     // default arguments
     //   offset = {0u}: expand to right dim {0u, 0u, ...}
     Offset offset = o;
-    if (o.size() == 1u && o.at(0) == 0u && dim > 1u)
-        offset = Offset(dim, 0u);
+    if (o.size() == 1u && o.at(0) == 0u)
+    {
+        if (joinedDimension().has_value())
+        {
+            offset.clear();
+        }
+        else if (dim > 1u)
+        {
+            offset = Offset(dim, 0u);
+        }
+    }
 
     //   extent = {-1u}: take full size
     Extent extent(dim, 1u);
@@ -277,45 +287,15 @@ template <typename T, typename F>
 inline DynamicMemoryView<T>
 RecordComponent::storeChunk(Offset o, Extent e, F &&createBuffer)
 {
-    if (constant())
-        throw std::runtime_error(
-            "Chunks cannot be written for a constant RecordComponent.");
-    if (empty())
-        throw std::runtime_error(
-            "Chunks cannot be written for an empty RecordComponent.");
-    Datatype dtype = determineDatatype<T>();
-    if (dtype != getDatatype())
-    {
-        std::ostringstream oss;
-        oss << "Datatypes of chunk data (" << dtype
-            << ") and record component (" << getDatatype() << ") do not match.";
-        throw std::runtime_error(oss.str());
-    }
-    uint8_t dim = getDimensionality();
-    if (e.size() != dim || o.size() != dim)
-    {
-        std::ostringstream oss;
-        oss << "Dimensionality of chunk ("
-            << "offset=" << o.size() << "D, "
-            << "extent=" << e.size() << "D) "
-            << "and record component (" << int(dim) << "D) "
-            << "do not match.";
-        throw std::runtime_error(oss.str());
-    }
-    Extent dse = getExtent();
-    for (uint8_t i = 0; i < dim; ++i)
-        if (dse[i] < o[i] + e[i])
-            throw std::runtime_error(
-                "Chunk does not reside inside dataset (Dimension on index " +
-                std::to_string(i) + ". DS: " + std::to_string(dse[i]) +
-                " - Chunk: " + std::to_string(o[i] + e[i]) + ")");
+    verifyChunk<T>(o, e);
 
     /*
      * The openPMD backend might not yet know about this dataset.
      * Flush the openPMD hierarchy to the backend without flushing any actual
      * data yet.
      */
-    seriesFlush({FlushLevel::SkeletonOnly});
+    seriesFlush_impl</* flush_entire_series = */ false>(
+        {FlushLevel::SkeletonOnly});
 
     size_t size = 1;
     for (auto ext : e)
@@ -333,6 +313,7 @@ RecordComponent::storeChunk(Offset o, Extent e, F &&createBuffer)
         dCreate.name = rc.m_name;
         dCreate.extent = getExtent();
         dCreate.dtype = getDatatype();
+        dCreate.joinedDimension = joinedDimension();
         if (!rc.m_dataset.has_value())
         {
             throw error::WrongAPIUsage(
@@ -357,6 +338,7 @@ RecordComponent::storeChunk(Offset o, Extent e, F &&createBuffer)
         out.ptr = static_cast<void *>(data.get());
         storeChunk(std::move(data), std::move(o), std::move(e));
     }
+    setDirtyRecursive(true);
     return DynamicMemoryView<T>{std::move(getBufferView), size, *this};
 }
 
@@ -372,5 +354,43 @@ RecordComponent::storeChunk(Offset offset, Extent extent)
             return std::shared_ptr< T[] >{ new T[ size ] };
 #endif
     });
+}
+
+namespace detail
+{
+    template <typename Functor, typename Res>
+    struct VisitRecordComponent
+    {
+        template <typename T, typename... Args>
+        static Res call(RecordComponent &rc, Args &&...args)
+        {
+            return Functor::template call<T>(rc, std::forward<Args>(args)...);
+        }
+
+        template <int = 0, typename... Args>
+        static Res call(Args &&...)
+        {
+            throw std::runtime_error(
+                "[RecordComponent::visit()] Unknown datatype in "
+                "RecordComponent");
+        }
+    };
+} // namespace detail
+
+template <typename Visitor, typename... Args>
+auto RecordComponent::visit(Args &&...args)
+    -> decltype(Visitor::template call<char>(
+        std::declval<RecordComponent &>(), std::forward<Args>(args)...))
+{
+    using Res = decltype(Visitor::template call<char>(
+        std::declval<RecordComponent &>(), std::forward<Args>(args)...));
+    return switchDatasetType<detail::VisitRecordComponent<Visitor, Res>>(
+        getDatatype(), *this, std::forward<Args>(args)...);
+}
+
+template <typename T>
+void RecordComponent::verifyChunk(Offset const &o, Extent const &e) const
+{
+    verifyChunk(determineDatatype<T>(), o, e);
 }
 } // namespace openPMD

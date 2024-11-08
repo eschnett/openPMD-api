@@ -44,6 +44,7 @@ template <typename FilePositionType>
 class AbstractIOHandlerImplCommon;
 template <typename>
 class Span;
+class Series;
 
 namespace internal
 {
@@ -52,7 +53,12 @@ namespace internal
 } // namespace internal
 namespace detail
 {
-    struct BufferedActions;
+    class ADIOS2File;
+}
+
+namespace debug
+{
+    void printDirty(Series const &);
 }
 
 /** @brief Layer to mirror structure of logical data and persistent data in
@@ -83,7 +89,7 @@ class Writable final
     friend class Record;
     friend class AbstractIOHandlerImpl;
     friend class ADIOS2IOHandlerImpl;
-    friend struct detail::BufferedActions;
+    friend class detail::ADIOS2File;
     friend class HDF5IOHandlerImpl;
     friend class ParallelHDF5IOHandlerImpl;
     template <typename>
@@ -94,6 +100,7 @@ class Writable final
     friend std::string concrete_bp1_file_position(Writable *);
     template <typename>
     friend class Span;
+    friend void debug::printDirty(Series const &);
 
 private:
     Writable(internal::AttributableData *);
@@ -113,13 +120,15 @@ public:
      * an object that has no parent, which is the Series object, and flush()-es
      * it.
      */
+    template <bool flush_entire_series>
     void seriesFlush(std::string backendConfig = "{}");
 
     // clang-format off
 OPENPMD_private
     // clang-format on
 
-    void seriesFlush(internal::FlushParams);
+    template <bool flush_entire_series>
+    void seriesFlush(internal::FlushParams const &);
     /*
      * These members need to be shared pointers since distinct instances of
      * Writable may share them.
@@ -135,14 +144,30 @@ OPENPMD_private
         IOHandler = nullptr;
     internal::AttributableData *attributable = nullptr;
     Writable *parent = nullptr;
-    bool dirty = true;
-    /**
-     * If parent is not null, then this is a vector of keys such that:
-     * &(*parent)[key_1]...[key_n] == this
-     * (Notice that scalar record components do not link their direct parent,
-     * but instead their parent's parent, hence a vector of keys)
+
+    /** Tracks if there are unwritten changes for this specific Writable.
+     *
+     * Manipulate via Attributable::dirty() and Attributable::setDirty().
      */
-    std::vector<std::string> ownKeyWithinParent;
+    bool dirtySelf = true;
+    /**
+     * Tracks if there are unwritten changes anywhere in the
+     * tree whose ancestor this Writable is.
+     *
+     * Invariant: this->dirtyRecursive implies parent->dirtyRecursive.
+     *
+     * dirtySelf and dirtyRecursive are separated since that allows specifying
+     * that `this` is not dirty, but some child is.
+     *
+     * Manipulate via Attributable::dirtyRecursive() and
+     * Attributable::setDirtyRecursive().
+     */
+    bool dirtyRecursive = true;
+    /**
+     * If parent is not null, then this is a key such that:
+     * &(*parent)[key] == this
+     */
+    std::string ownKeyWithinParent;
     /**
      * @brief Whether a Writable has been written to the backend.
      *

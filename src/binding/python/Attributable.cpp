@@ -26,11 +26,18 @@
 #include "openPMD/binding/python/Common.hpp"
 #include "openPMD/binding/python/Numpy.hpp"
 
+#include <pybind11/detail/common.h>
+
 #include <algorithm>
 #include <array>
 #include <complex>
+#include <exception>
+#include <iterator>
 #include <map>
+#include <optional>
+#include <pybind11/pytypes.h>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using PyAttributeKeys = std::vector<std::string>;
@@ -155,61 +162,61 @@ bool setAttributeFromBufferInfo(
                 ) );
         else */
         // std::cout << "+++++++++++ BUFFER: " << buf.format << std::endl;
-        if (buf.format.find("b") != std::string::npos)
+        if (buf.format.find('b') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<char>(
                     static_cast<char *>(buf.ptr),
                     static_cast<char *>(buf.ptr) + buf.size));
-        else if (buf.format.find("h") != std::string::npos)
+        else if (buf.format.find('h') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<short>(
                     static_cast<short *>(buf.ptr),
                     static_cast<short *>(buf.ptr) + buf.size));
-        else if (buf.format.find("i") != std::string::npos)
+        else if (buf.format.find('i') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<int>(
                     static_cast<int *>(buf.ptr),
                     static_cast<int *>(buf.ptr) + buf.size));
-        else if (buf.format.find("l") != std::string::npos)
+        else if (buf.format.find('l') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<long>(
                     static_cast<long *>(buf.ptr),
                     static_cast<long *>(buf.ptr) + buf.size));
-        else if (buf.format.find("q") != std::string::npos)
+        else if (buf.format.find('q') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<long long>(
                     static_cast<long long *>(buf.ptr),
                     static_cast<long long *>(buf.ptr) + buf.size));
-        else if (buf.format.find("B") != std::string::npos)
+        else if (buf.format.find('B') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<unsigned char>(
                     static_cast<unsigned char *>(buf.ptr),
                     static_cast<unsigned char *>(buf.ptr) + buf.size));
-        else if (buf.format.find("H") != std::string::npos)
+        else if (buf.format.find('H') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<unsigned short>(
                     static_cast<unsigned short *>(buf.ptr),
                     static_cast<unsigned short *>(buf.ptr) + buf.size));
-        else if (buf.format.find("I") != std::string::npos)
+        else if (buf.format.find('I') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<unsigned int>(
                     static_cast<unsigned int *>(buf.ptr),
                     static_cast<unsigned int *>(buf.ptr) + buf.size));
-        else if (buf.format.find("L") != std::string::npos)
+        else if (buf.format.find('L') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<unsigned long>(
                     static_cast<unsigned long *>(buf.ptr),
                     static_cast<unsigned long *>(buf.ptr) + buf.size));
-        else if (buf.format.find("Q") != std::string::npos)
+        else if (buf.format.find('Q') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<unsigned long long>(
@@ -234,19 +241,19 @@ bool setAttributeFromBufferInfo(
                     static_cast<std::complex<long double> *>(buf.ptr),
                     static_cast<std::complex<long double> *>(buf.ptr) +
                         buf.size));
-        else if (buf.format.find("f") != std::string::npos)
+        else if (buf.format.find('f') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<float>(
                     static_cast<float *>(buf.ptr),
                     static_cast<float *>(buf.ptr) + buf.size));
-        else if (buf.format.find("d") != std::string::npos)
+        else if (buf.format.find('d') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<double>(
                     static_cast<double *>(buf.ptr),
                     static_cast<double *>(buf.ptr) + buf.size));
-        else if (buf.format.find("g") != std::string::npos)
+        else if (buf.format.find('g') != std::string::npos)
             return attr.setAttribute(
                 key,
                 std::vector<long double>(
@@ -262,29 +269,24 @@ bool setAttributeFromBufferInfo(
     }
 }
 
-struct SetAttributeFromObject
+namespace detail
 {
-    static constexpr char const *errorMsg = "Attributable.set_attribute()";
-
-    template <typename RequestedType>
-    static bool
-    call(Attributable &attr, std::string const &key, py::object &obj)
+template <typename RequestedType>
+bool setAttributeFromObject_default(
+    Attributable &attr, std::string const &key, py::object &obj)
+{
+    if (std::string(py::str(obj.get_type())) == "<class 'list'>")
     {
-        if (std::string(py::str(obj.get_type())) == "<class 'list'>")
-        {
-            using ListType = std::vector<RequestedType>;
-            return attr.setAttribute<ListType>(key, obj.cast<ListType>());
-        }
-        else
-        {
-            return attr.setAttribute<RequestedType>(
-                key, obj.cast<RequestedType>());
-        }
+        using ListType = std::vector<RequestedType>;
+        return attr.setAttribute<ListType>(key, obj.cast<ListType>());
     }
-};
+    else
+    {
+        return attr.setAttribute<RequestedType>(key, obj.cast<RequestedType>());
+    }
+}
 
-template <>
-bool SetAttributeFromObject::call<double>(
+bool setAttributeFromObject_double(
     Attributable &attr, std::string const &key, py::object &obj)
 {
     if (std::string(py::str(obj.get_type())) == "<class 'list'>")
@@ -309,39 +311,176 @@ bool SetAttributeFromObject::call<double>(
     }
 }
 
-template <>
-bool SetAttributeFromObject::call<bool>(
+bool setAttributeFromObject_bool(
     Attributable &attr, std::string const &key, py::object &obj)
 {
     return attr.setAttribute<bool>(key, obj.cast<bool>());
 }
 
+template <bool is_signed = std::is_signed_v<char>>
+struct char_to_explicit_char;
+
 template <>
-bool SetAttributeFromObject::call<char>(
-    Attributable &attr, std::string const &key, py::object &obj)
+struct char_to_explicit_char<true>
 {
-    if (std::string(py::str(obj.get_type())) == "<class 'list'>")
+    using type = signed char;
+    using opposite_type = unsigned char;
+};
+
+template <>
+struct char_to_explicit_char<false>
+{
+    using type = unsigned char;
+    using opposite_type = signed char;
+};
+
+template <typename TargetType>
+std::optional<TargetType> tryCast(py::object const &obj)
+{
+    // Do a check to avoid throwing exceptions
+    if constexpr (std::is_default_constructible_v<TargetType>)
     {
-        using ListChar = std::vector<char>;
-        using ListString = std::vector<std::string>;
-        try
+        TargetType val{};
+        auto python_val = py::cast(std::move(val));
+        if (!py::isinstance(obj, python_val.get_type()))
         {
-            return attr.setAttribute<ListString>(key, obj.cast<ListString>());
-        }
-        catch (const py::cast_error &)
-        {
-            return attr.setAttribute<ListChar>(key, obj.cast<ListChar>());
+            return std::nullopt;
         }
     }
-    else if (std::string(py::str(obj.get_type())) == "<class 'str'>")
+    try
     {
-        return attr.setAttribute<std::string>(key, obj.cast<std::string>());
+        return obj.cast<TargetType>();
+    }
+    catch (py::cast_error const &)
+    {
+        return std::nullopt;
+    }
+    catch (py::value_error const &err)
+    {
+        return std::nullopt;
+    }
+}
+
+template <typename Char_t>
+bool setAttributeFromObject_char(
+    Attributable &attr, std::string const &key, py::object &obj)
+{
+    using explicit_char_type = std::conditional_t<
+        std::is_same_v<Char_t, char>,
+        typename char_to_explicit_char<>::type,
+        Char_t>;
+    using ListString = std::vector<std::string>;
+
+    /*
+     * We cannot distinguish strings with length 1 from chars at this place,
+     * so avoid this cast. If the attribute is actually a char, skipping this
+     * branch means that it might be upcasted to string.
+     */
+#if 0
+    using ListChar = std::vector<char>;
+    if (auto casted_char = tryCast<char>(obj); casted_char.has_value())
+    {
+        return attr.setAttribute<char>(key, *casted_char);
+    } else
+#endif
+
+    // This must come after tryCast<char>
+    // because tryCast<string> implicitly covers chars as well.
+    if (auto casted_string = tryCast<std::string>(obj);
+        casted_string.has_value())
+    {
+        return attr.setAttribute<std::string>(key, std::move(*casted_string));
+    }
+    // Assuming `char` is signed on the current platform,
+    // then this cast will cover `signed char`.
+    // It's a bit weird: The Numpy datatype will be the same as `char`
+    // (.ie. 'b'), but the `py::object` will contain an integer.
+    // Similar for `unsigned char` if `char`s are unsigned.
+    else if (auto casted_int = tryCast<int>(obj); casted_int.has_value())
+    {
+        return attr.setAttribute<explicit_char_type>(
+            key, explicit_char_type(*casted_int));
+    }
+
+    // NOW: List casts.
+    // All list casts must come after all scalar casts,
+    // because list casts implicitly cover scalars too.
+
+    /*
+     * We cannot distinguish strings with length 1 from chars at this place,
+     * so avoid this cast. If the attribute is actually a vector of char,
+     * skipping this branch means that it might be upcasted to a vector of
+     * string.
+     */
+#if 0
+    else if (auto list_of_char = tryCast<ListChar>(obj);
+             list_of_char.has_value())
+    {
+        return attr.setAttribute<ListChar>(key, std::move(*list_of_char));
+    }
+#endif
+    // this must come after tryCast<vector<char>>,
+    // because tryCast<vector<string>> implicitly covers chars as well
+    else if (auto list_of_string = tryCast<ListString>(obj);
+             list_of_string.has_value())
+    {
+        return attr.setAttribute<ListString>(key, std::move(*list_of_string));
+    }
+    // Again: `char` vs. `signed char`, resp. `char` vs. `unsigned char`
+    // depending on `char`'s signedness.
+    else if (auto list_of_int = tryCast<std::vector<int>>(obj);
+             list_of_int.has_value())
+    {
+        std::vector<explicit_char_type> casted;
+        casted.reserve(list_of_int->size());
+        std::transform(
+            list_of_int->begin(),
+            list_of_int->end(),
+            std::back_inserter(casted),
+            [](int const val) { return explicit_char_type(val); });
+        return attr.setAttribute<std::vector<explicit_char_type>>(
+            key, std::move(casted));
     }
     else
     {
-        return attr.setAttribute<char>(key, obj.cast<char>());
+        throw std::runtime_error(
+            "[Python SetAttributeFromObject<char>] Was not able to use passed "
+            "object as any char-based type.");
     }
 }
+} // namespace detail
+
+struct SetAttributeFromObject
+{
+    static constexpr char const *errorMsg = "Attributable.set_attribute()";
+
+    template <typename RequestedType>
+    static bool
+    call(Attributable &attr, std::string const &key, py::object &obj)
+    {
+        if constexpr (std::is_same_v<RequestedType, double>)
+        {
+            return ::detail::setAttributeFromObject_double(attr, key, obj);
+        }
+        else if constexpr (std::is_same_v<RequestedType, bool>)
+        {
+            return ::detail::setAttributeFromObject_bool(attr, key, obj);
+        }
+        else if constexpr (
+            std::is_same_v<RequestedType, char> ||
+            std::is_same_v<RequestedType, signed char> ||
+            std::is_same_v<RequestedType, unsigned char>)
+        {
+            return ::detail::setAttributeFromObject_char<RequestedType>(
+                attr, key, obj);
+        }
+        else
+        {
+            return ::detail::setAttributeFromObject_default<RequestedType>(
+                attr, key, obj);
+        }
+    }
+};
 
 bool setAttributeFromObject(
     Attributable &attr,
@@ -349,7 +488,7 @@ bool setAttributeFromObject(
     py::object &obj,
     pybind11::dtype datatype)
 {
-    Datatype requestedDatatype = dtype_from_numpy(datatype);
+    Datatype requestedDatatype = dtype_from_numpy(std::move(datatype));
     return switchNonVectorType<SetAttributeFromObject>(
         requestedDatatype, attr, key, obj);
 }
@@ -378,6 +517,10 @@ void init_Attributable(py::module &m)
             "series_flush",
             py::overload_cast<std::string>(&Attributable::seriesFlush),
             py::arg("backend_config") = "{}")
+        .def(
+            "iteration_flush",
+            py::overload_cast<std::string>(&Attributable::iterationFlush),
+            py::arg("backend_config") = "{}")
 
         .def_property_readonly(
             "attributes",
@@ -401,7 +544,8 @@ void init_Attributable(py::module &m)
                std::string const &key,
                py::object &obj,
                pybind11::dtype datatype) {
-                return setAttributeFromObject(attr, key, obj, datatype);
+                return setAttributeFromObject(
+                    attr, key, obj, std::move(datatype));
             },
             py::arg("key"),
             py::arg("value"),
@@ -409,7 +553,10 @@ void init_Attributable(py::module &m)
 
         // fundamental Python types
         .def("set_attribute", &Attributable::setAttribute<bool>)
-        .def("set_attribute", &Attributable::setAttribute<unsigned char>)
+        .def(
+            "set_attribute",
+            &Attributable::setAttribute<
+                typename ::detail::char_to_explicit_char<>::opposite_type>)
         // -> handle all native python integers as long
         // .def("set_attribute", &Attributable::setAttribute< short >)
         // .def("set_attribute", &Attributable::setAttribute< int >)
@@ -485,8 +632,6 @@ void init_Attributable(py::module &m)
             })
         .def("delete_attribute", &Attributable::deleteAttribute)
         .def("contains_attribute", &Attributable::containsAttribute)
-
-        .def("__len__", &Attributable::numAttributes)
 
         // @todo _ipython_key_completions_ if we find a way to add a []
         // interface

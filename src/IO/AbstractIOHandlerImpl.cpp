@@ -25,6 +25,9 @@
 #include "openPMD/backend/Writable.hpp"
 
 #include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
 
 namespace openPMD
 {
@@ -37,19 +40,67 @@ AbstractIOHandlerImpl::AbstractIOHandlerImpl(AbstractIOHandler *handler)
     }
 }
 
-void AbstractIOHandlerImpl::keepSynchronous(
-    Writable *writable, Parameter<Operation::KEEP_SYNCHRONOUS> param)
+namespace
 {
-    writable->abstractFilePosition = param.otherWritable->abstractFilePosition;
-    writable->written = true;
-}
+    template <typename Vec>
+    auto vec_as_string(Vec const &vec) -> std::string
+    {
+        if (vec.empty())
+        {
+            return "[]";
+        }
+        else
+        {
+            std::stringstream res;
+            res << '[';
+            auto it = vec.begin();
+            res << *it++;
+            auto end = vec.end();
+            for (; it != end; ++it)
+            {
+                res << ", " << *it;
+            }
+            res << ']';
+            return res.str();
+        }
+    }
+
+    template <typename T, typename SFINAE = void>
+    struct self_or_invoked
+    {
+        using type = T;
+    };
+
+    template <typename T>
+    struct self_or_invoked<T, std::enable_if_t<std::is_invocable_v<T>>>
+    {
+        using type = std::invoke_result_t<T>;
+    };
+
+    template <typename T>
+    using self_or_invoked_t = typename self_or_invoked<T>::type;
+
+    template <typename DeferredString>
+    auto undefer_string(DeferredString &&str)
+        -> self_or_invoked_t<DeferredString &&>
+    {
+        if constexpr (std::is_invocable_v<DeferredString &&>)
+        {
+            return str();
+        }
+        else
+        {
+            return std::forward<DeferredString>(str);
+        }
+    }
+} // namespace
 
 template <typename... Args>
 void AbstractIOHandlerImpl::writeToStderr([[maybe_unused]] Args &&...args) const
 {
     if (m_verboseIOTasks)
     {
-        (std::cerr << ... << args) << std::endl;
+        (std::cerr << ... << undefer_string(args)) << std::endl;
     }
 }
 
@@ -114,7 +165,9 @@ std::future<void> AbstractIOHandlerImpl::flush()
                     "->",
                     i.writable,
                     "] CREATE_DATASET: ",
-                    parameter.name);
+                    parameter.name,
+                    ", extent=",
+                    [&parameter]() { return vec_as_string(parameter.extent); });
                 createDataset(i.writable, parameter);
                 break;
             }
@@ -324,7 +377,22 @@ std::future<void> AbstractIOHandlerImpl::flush()
                 auto &parameter = deref_dynamic_cast<Parameter<O::ADVANCE>>(
                     i.parameter.get());
                 writeToStderr(
-                    "[", i.writable->parent, "->", i.writable, "] ADVANCE");
+                    "[",
+                    i.writable->parent,
+                    "->",
+                    i.writable,
+                    "] ADVANCE ",
+                    [&]() {
+                        switch (parameter.mode)
+                        {
+
+                        case AdvanceMode::BEGINSTEP:
+                            return "BEGINSTEP";
+                        case AdvanceMode::ENDSTEP:
+                            return "ENDSTEP";
+                        }
+                        throw std::runtime_error("Unreachable!");
+                    }());
                 advance(i.writable, parameter);
                 break;
             }
@@ -341,44 +409,85 @@ std::future<void> AbstractIOHandlerImpl::flush()
                 availableChunks(i.writable, parameter);
                 break;
             }
-            case O::KEEP_SYNCHRONOUS: {
-                auto &parameter =
-                    deref_dynamic_cast<Parameter<O::KEEP_SYNCHRONOUS>>(
-                        i.parameter.get());
-                writeToStderr(
-                    "[",
-                    i.writable->parent,
-                    "->",
-                    i.writable,
-                    "] KEEP_SYNCHRONOUS");
-                keepSynchronous(i.writable, parameter);
-                break;
-            }
             case O::DEREGISTER: {
                 auto &parameter = deref_dynamic_cast<Parameter<O::DEREGISTER>>(
                     i.parameter.get());
                 writeToStderr(
-                    "[", i.writable->parent, "->", i.writable, "] DEREGISTER");
+                    "[",
+                    parameter.former_parent,
+                    "->",
+                    i.writable,
+                    "] DEREGISTER");
                 deregister(i.writable, parameter);
+                break;
+            }
+            case O::TOUCH: {
+                auto &parameter =
+                    deref_dynamic_cast<Parameter<O::TOUCH>>(i.parameter.get());
+                writeToStderr(
+                    "[", i.writable->parent, "->", i.writable, "] TOUCH");
+                touch(i.writable, parameter);
+                break;
+            }
+            case O::SET_WRITTEN: {
+                auto &parameter = deref_dynamic_cast<Parameter<O::SET_WRITTEN>>(
+                    i.parameter.get());
+                writeToStderr(
+                    "[", i.writable->parent, "->", i.writable, "] SET_WRITTEN");
+                setWritten(i.writable, parameter);
                 break;
             }
             }
         }
         catch (...)
         {
-            std::cerr << "[AbstractIOHandlerImpl] IO Task "
-                      << internal::operationAsString(i.operation)
-                      << " failed with exception. Clearing IO queue and "
-                         "passing on the exception."
-                      << std::endl;
-            while (!m_handler->m_work.empty())
+            auto base_handler = [&i, this]() {
+                std::cerr << "[AbstractIOHandlerImpl] IO Task "
+                          << internal::operationAsString(i.operation)
+                          << " failed with exception. Clearing IO queue and "
+                             "passing on the exception."
+                          << std::endl;
+                while (!m_handler->m_work.empty())
+                {
+                    m_handler->m_work.pop();
+                }
+            };
+
+            if (m_verboseIOTasks)
             {
-                m_handler->m_work.pop();
+                try
+                {
+                    // Throw again so we can distinguish between std::exception
+                    // and other exception types.
+                    throw;
+                }
+                catch (std::exception const &e)
+                {
+                    base_handler();
+                    std::cerr << "Original exception: " << e.what()
+                              << std::endl;
+                    throw;
+                }
+                catch (...)
+                {
+                    base_handler();
+                    throw;
+                }
             }
-            throw;
+            else
+            {
+                base_handler();
+                throw;
+            }
         }
         (*m_handler).m_work.pop();
     }
     return std::future<void>();
+}
+
+void AbstractIOHandlerImpl::setWritten(
+    Writable *w, Parameter<Operation::SET_WRITTEN> const &param)
+{
+    w->written = param.target_status;
 }
 } // namespace openPMD

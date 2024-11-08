@@ -19,10 +19,12 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 #include "openPMD/Mesh.hpp"
+#include "openPMD/backend/Attributable.hpp"
 #include "openPMD/backend/BaseRecord.hpp"
 #include "openPMD/backend/MeshRecordComponent.hpp"
 
 #include "openPMD/binding/python/Common.hpp"
+#include "openPMD/binding/python/Container.H"
 #include "openPMD/binding/python/Pickle.hpp"
 #include "openPMD/binding/python/UnitDimension.hpp"
 
@@ -31,7 +33,18 @@
 
 void init_Mesh(py::module &m)
 {
+    auto py_m_cont =
+        declare_container<PyMeshContainer, Attributable>(m, "Mesh_Container");
+
     py::class_<Mesh, BaseRecord<MeshRecordComponent> > cl(m, "Mesh");
+
+    py::enum_<Mesh::Geometry>(m, "Geometry") // TODO: m -> cl
+        .value("cartesian", Mesh::Geometry::cartesian)
+        .value("thetaMode", Mesh::Geometry::thetaMode)
+        .value("cylindrical", Mesh::Geometry::cylindrical)
+        .value("spherical", Mesh::Geometry::spherical)
+        .value("other", Mesh::Geometry::other);
+
     cl.def(py::init<Mesh const &>())
 
         .def(
@@ -102,15 +115,11 @@ void init_Mesh(py::module &m)
         .def("set_grid_global_offset", &Mesh::setGridGlobalOffset)
         .def("set_grid_unit_SI", &Mesh::setGridUnitSI);
     add_pickle(
-        cl, [](openPMD::Series &series, std::vector<std::string> const &group) {
+        cl, [](openPMD::Series series, std::vector<std::string> const &group) {
             uint64_t const n_it = std::stoull(group.at(1));
-            return series.iterations[n_it].meshes[group.at(3)];
+            auto res = series.iterations[n_it].open().meshes[group.at(3)];
+            return internal::makeOwning(res, std::move(series));
         });
 
-    py::enum_<Mesh::Geometry>(m, "Geometry")
-        .value("cartesian", Mesh::Geometry::cartesian)
-        .value("thetaMode", Mesh::Geometry::thetaMode)
-        .value("cylindrical", Mesh::Geometry::cylindrical)
-        .value("spherical", Mesh::Geometry::spherical)
-        .value("other", Mesh::Geometry::other);
+    finalize_container<PyMeshContainer>(py_m_cont);
 }

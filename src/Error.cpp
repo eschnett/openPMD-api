@@ -12,19 +12,18 @@ const char *Error::what() const noexcept
 namespace error
 {
     OperationUnsupportedInBackend::OperationUnsupportedInBackend(
-        std::string backend_in, std::string what)
+        std::string backend_in, std::string const &what)
         : Error("Operation unsupported in " + backend_in + ": " + what)
         , backend{std::move(backend_in)}
     {}
 
-    void
-    throwOperationUnsupportedInBackend(std::string backend, std::string what)
+    void throwOperationUnsupportedInBackend(
+        std::string backend, std::string const &what)
     {
-        throw OperationUnsupportedInBackend(
-            std::move(backend), std::move(what));
+        throw OperationUnsupportedInBackend(std::move(backend), what);
     }
 
-    WrongAPIUsage::WrongAPIUsage(std::string what)
+    WrongAPIUsage::WrongAPIUsage(std::string const &what)
         : Error("Wrong API usage: " + what)
     {}
 
@@ -121,6 +120,12 @@ namespace error
         , reason(reason_in)
         , backend(std::move(backend_in))
         , description(std::move(description_in))
+    {}
+
+    IllegalInOpenPMDStandard::IllegalInOpenPMDStandard(std::string what_in)
+        : Error(
+              "Operation leads to illegal use of the openPMD standard:\n" +
+              std::move(what_in))
     {}
 
     void throwReadError(

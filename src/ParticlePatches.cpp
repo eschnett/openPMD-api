@@ -32,7 +32,7 @@ size_t ParticlePatches::numPatches() const
     if (this->empty())
         return 0;
 
-    return this->at("numParticles").at(RecordComponent::SCALAR).getExtent()[0];
+    return this->at("numParticles").getExtent()[0];
 }
 
 void ParticlePatches::read()
@@ -78,10 +78,8 @@ void ParticlePatches::read()
         }
 
         PatchRecord &pr = Container<PatchRecord>::operator[](component_name);
-        PatchRecordComponent &prc = pr[RecordComponent::SCALAR];
-        prc.parent() = pr.parent();
+        PatchRecordComponent &prc = pr;
         dOpen.name = component_name;
-        IOHandler()->enqueue(IOTask(&pr, dOpen));
         IOHandler()->enqueue(IOTask(&prc, dOpen));
         IOHandler()->flush(internal::defaultFlushParams);
 
@@ -95,14 +93,14 @@ void ParticlePatches::read()
                     datatypeToString(*dOpen.dtype) + ")");
 
         /* allow all attributes to be set */
-        prc.written() = false;
+        prc.setWritten(false, Attributable::EnqueueAsynchronously::No);
         prc.resetDataset(Dataset(*dOpen.dtype, *dOpen.extent));
-        prc.written() = true;
+        prc.setWritten(true, Attributable::EnqueueAsynchronously::No);
 
-        pr.dirty() = false;
+        pr.setDirty(false);
         try
         {
-            prc.read();
+            prc.PatchRecordComponent::read(/* require_unit_si = */ false);
         }
         catch (error::ReadError const &err)
         {
@@ -113,5 +111,6 @@ void ParticlePatches::read()
             Container<PatchRecord>::container().erase(component_name);
         }
     }
+    setDirty(false);
 }
 } // namespace openPMD

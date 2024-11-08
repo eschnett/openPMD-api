@@ -130,6 +130,10 @@ class Iteration : public Attributable
     friend class Series;
     friend class WriteIterations;
     friend class SeriesIterator;
+    friend class internal::AttributableData;
+    template <typename T>
+    friend T &internal::makeOwning(T &self, Series);
+    friend class Writable;
 
 public:
     Iteration(Iteration const &) = default;
@@ -244,17 +248,28 @@ public:
 private:
     Iteration();
 
-    std::shared_ptr<internal::IterationData> m_iterationData{
-        new internal::IterationData};
+    using Data_t = internal::IterationData;
+    std::shared_ptr<Data_t> m_iterationData;
 
-    inline internal::IterationData const &get() const
+    inline Data_t const &get() const
     {
         return *m_iterationData;
     }
 
-    inline internal::IterationData &get()
+    inline Data_t &get()
     {
         return *m_iterationData;
+    }
+
+    inline std::shared_ptr<Data_t> getShared()
+    {
+        return m_iterationData;
+    }
+
+    inline void setData(std::shared_ptr<Data_t> data)
+    {
+        m_iterationData = std::move(data);
+        Attributable::setData(m_iterationData);
     }
 
     void flushFileBased(
@@ -284,7 +299,9 @@ private:
      */
     void reread(std::string const &path);
     void readFileBased(
-        std::string filePath, std::string const &groupPath, bool beginStep);
+        std::string const &filePath,
+        std::string const &groupPath,
+        bool beginStep);
     void readGorVBased(std::string const &groupPath, bool beginStep);
     void read_impl(std::string const &groupPath);
     void readMeshes(std::string const &meshesPath);
@@ -371,16 +388,6 @@ private:
      * this very object).
      */
     void setStepStatus(StepStatus);
-
-    /*
-     * @brief Check recursively whether this Iteration is dirty.
-     *        It is dirty if any attribute or dataset is read from or written to
-     *        the backend.
-     *
-     * @return true If dirty.
-     * @return false Otherwise.
-     */
-    bool dirtyRecursive() const;
 
     /**
      * @brief Link with parent.

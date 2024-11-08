@@ -23,14 +23,21 @@
 #include "openPMD/RecordComponent.hpp"
 #include "openPMD/Series.hpp"
 
+#include "openPMD/backend/Attributable.hpp"
 #include "openPMD/binding/python/Common.hpp"
+#include "openPMD/binding/python/Container.H"
 #include "openPMD/binding/python/Pickle.hpp"
+#include "openPMD/binding/python/RecordComponent.hpp"
 
 #include <string>
 #include <vector>
 
 void init_MeshRecordComponent(py::module &m)
 {
+    auto py_mrc_cnt =
+        declare_container<PyMeshRecordComponentContainer, Attributable>(
+            m, "Mesh_Record_Component_Container");
+
     py::class_<MeshRecordComponent, RecordComponent> cl(
         m, "Mesh_Record_Component");
     cl.def(
@@ -75,8 +82,26 @@ void init_MeshRecordComponent(py::module &m)
             "Relative position of the component on an element "
             "(node/cell/voxel) of the mesh");
     add_pickle(
-        cl, [](openPMD::Series &series, std::vector<std::string> const &group) {
+        cl, [](openPMD::Series series, std::vector<std::string> const &group) {
             uint64_t const n_it = std::stoull(group.at(1));
-            return series.iterations[n_it].meshes[group.at(3)][group.at(4)];
+            auto res =
+                series.iterations[n_it]
+                    .open()
+                    .meshes[group.at(3)]
+                           [group.size() < 5 ? MeshRecordComponent::SCALAR
+                                             : group.at(4)];
+            return internal::makeOwning(res, std::move(series));
         });
+
+    finalize_container<PyMeshRecordComponentContainer>(py_mrc_cnt);
+    addRecordComponentSetGet(
+        finalize_container<PyBaseRecordMeshRecordComponent>(
+            declare_container<
+                PyBaseRecordMeshRecordComponent,
+                PyMeshRecordComponentContainer,
+                MeshRecordComponent>(m, "Base_Record_Mesh_Record_Component")))
+        .def_property_readonly(
+            "scalar",
+            &BaseRecord<MeshRecordComponent>::scalar,
+            &docstring::is_scalar[1]);
 }

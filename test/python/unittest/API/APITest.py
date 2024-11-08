@@ -25,8 +25,10 @@ except ImportError:
 from TestUtilities.TestUtilities import generateTestFilePath
 
 tested_file_extensions = [
-    ext for ext in io.file_extensions if ext != 'sst' and ext != 'ssc'
-]
+    ext for ext in io.file_extensions
+    # TOML is relatively slow and it's just an adaptor for the JSON backend,
+    # so it doesn't require full testing
+    if ext != 'sst' and ext != 'ssc' and ext != 'toml']
 
 
 class APITest(unittest.TestCase):
@@ -264,8 +266,25 @@ class APITest(unittest.TestCase):
         self.assertEqual(series.get_attribute("char"), "c")
         self.assertEqual(series.get_attribute("pystring"), "howdy!")
         self.assertEqual(series.get_attribute("pystring2"), "howdy, too!")
-        self.assertEqual(bytes(series.get_attribute("pystring3")),
-                         b"howdy, again!")
+        if file_ending == 'h5':
+            # A byte string b"hello" is always (really?) a vector of unsigned
+            # chars.
+            # HDF5 does not distinguish a platform char type, only explicitly
+            # signed or unsigned chars. Depending on the signed-ness of char
+            # on the current platform, the unsigned char from the byte string
+            # might then be interpreted as a char, not as an unsigned char.
+            # This means that the roundtrip might not work on platforms with
+            # unsigned char.
+            try:
+                as_bytes = bytes(series.get_attribute("pystring3"))
+                self.assertEqual(as_bytes, b"howdy, again!")
+            except TypeError:
+                self.assertEqual(
+                    series.get_attribute("pystring3"),
+                    [c for c in "howdy, again!"])
+        else:
+            self.assertEqual(bytes(series.get_attribute("pystring3")),
+                             b"howdy, again!")
         self.assertEqual(series.get_attribute("pyint"), 13)
         self.assertAlmostEqual(series.get_attribute("pyfloat"), 3.1416)
         self.assertEqual(series.get_attribute("pybool"), False)
@@ -361,7 +380,11 @@ class APITest(unittest.TestCase):
         self.assertEqual(series.get_attribute("ubyte_c"), 50)
         # TODO: returns [100] instead of 100 in json/toml
         if file_ending != "json" and file_ending != "toml":
-            self.assertEqual(chr(series.get_attribute("char_c")), 'd')
+            try:
+                c = chr(series.get_attribute("char_c"))
+                self.assertEqual(c, 'd')
+            except TypeError:
+                self.assertEqual(series.get_attribute("char_c"), 'd')
         self.assertEqual(series.get_attribute("int16_c"), 2)
         self.assertEqual(series.get_attribute("int32_c"), 3)
         self.assertEqual(series.get_attribute("int64_c"), 4)
@@ -950,6 +973,8 @@ class APITest(unittest.TestCase):
         series.flush()
 
         # Pickle
+        pickled_s = pickle.dumps(series)
+        pickled_i = pickle.dumps(i)
         pickled_E = pickle.dumps(E)
         pickled_E_x = pickle.dumps(E_x)
         pickled_electrons = pickle.dumps(electrons)
@@ -959,6 +984,7 @@ class APITest(unittest.TestCase):
         pickled_w = pickle.dumps(w)
         print(f"This is my pickled object:\n{pickled_E_x}\n")
 
+        series.close()
         del E
         del E_x
         del electrons
@@ -966,9 +992,12 @@ class APITest(unittest.TestCase):
         del pos
         del pos_y
         del w
+        del i
         del series
 
         # Unpickling the object
+        series = pickle.loads(pickled_s)
+        i = pickle.loads(pickled_i)
         E = pickle.loads(pickled_E)
         E_x = pickle.loads(pickled_E_x)
         electrons = pickle.loads(pickled_electrons)
@@ -979,6 +1008,8 @@ class APITest(unittest.TestCase):
         print(
             f"This is E_x.position of the unpickled object:\n{E_x.position}\n")
 
+        self.assertIsInstance(series, io.Series)
+        self.assertIsInstance(i, io.Iteration)
         self.assertIsInstance(E, io.Mesh)
         self.assertIsInstance(E_x, io.Mesh_Record_Component)
         self.assertIsInstance(electrons, io.ParticleSpecies)

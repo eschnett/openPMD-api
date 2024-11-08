@@ -30,6 +30,7 @@
 #include "openPMD/backend/Attribute.hpp"
 #include "openPMD/backend/ParsePreference.hpp"
 
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <string>
@@ -75,9 +76,9 @@ OPENPMDAPI_EXPORT_ENUM_CLASS(Operation){
 
     ADVANCE,
     AVAILABLE_CHUNKS, //!< Query chunks that can be loaded in a dataset
-    KEEP_SYNCHRONOUS, //!< Keep two items in the object model synchronous with
-                      //!< each other
-    DEREGISTER //!< Inform the backend that an object has been deleted.
+    DEREGISTER, //!< Inform the backend that an object has been deleted.
+    TOUCH, //!< tell the backend that the file is to be considered active
+    SET_WRITTEN //!< tell backend to consider a file written / not written
 }; // note: if you change the enum members here, please update
    // docs/source/dev/design.rst
 
@@ -141,7 +142,6 @@ struct OPENPMDAPI_EXPORT Parameter<Operation::CREATE_FILE>
     }
 
     std::string name = "";
-    IterationEncoding encoding = IterationEncoding::groupBased;
 };
 
 template <>
@@ -188,12 +188,6 @@ struct OPENPMDAPI_EXPORT Parameter<Operation::OPEN_FILE>
     }
 
     std::string name = "";
-    /*
-     * The backends might need to ensure availability of certain features
-     * for some iteration encodings, e.g. availability of ADIOS steps for
-     * variableBased encoding.
-     */
-    IterationEncoding encoding = IterationEncoding::groupBased;
     using ParsePreference = internal::ParsePreference;
     std::shared_ptr<ParsePreference> out_parsePreference =
         std::make_shared<ParsePreference>(ParsePreference::UpFront);
@@ -349,6 +343,7 @@ struct OPENPMDAPI_EXPORT Parameter<Operation::CREATE_DATASET>
     Extent extent = {};
     Datatype dtype = Datatype::UNDEFINED;
     std::string options = "{}";
+    std::optional<size_t> joinedDimension;
 
     /** Warn about unused JSON paramters
      *
@@ -658,37 +653,64 @@ struct OPENPMDAPI_EXPORT Parameter<Operation::AVAILABLE_CHUNKS>
 };
 
 template <>
-struct OPENPMDAPI_EXPORT Parameter<Operation::KEEP_SYNCHRONOUS>
-    : public AbstractParameter
-{
-    Parameter() = default;
-    Parameter(Parameter &&) = default;
-    Parameter(Parameter const &) = default;
-    Parameter &operator=(Parameter &&) = default;
-    Parameter &operator=(Parameter const &) = default;
-
-    std::unique_ptr<AbstractParameter> to_heap() && override
-    {
-        return std::make_unique<Parameter<Operation::KEEP_SYNCHRONOUS>>(
-            std::move(*this));
-    }
-
-    Writable *otherWritable;
-};
-
-template <>
 struct OPENPMDAPI_EXPORT Parameter<Operation::DEREGISTER>
     : public AbstractParameter
 {
-    Parameter() = default;
-    Parameter(Parameter const &) : AbstractParameter()
+    Parameter(void const *ptr_in) : former_parent(ptr_in)
     {}
+
+    Parameter(Parameter const &) = default;
+    Parameter(Parameter &&) = default;
+
+    Parameter &operator=(Parameter const &) = default;
+    Parameter &operator=(Parameter &&) = default;
 
     std::unique_ptr<AbstractParameter> to_heap() && override
     {
         return std::make_unique<Parameter<Operation::DEREGISTER>>(
             std::move(*this));
     }
+
+    // Just for verbose logging.
+    void const *former_parent = nullptr;
+};
+
+template <>
+struct OPENPMDAPI_EXPORT Parameter<Operation::TOUCH> : public AbstractParameter
+{
+    explicit Parameter() = default;
+
+    Parameter(Parameter const &) = default;
+    Parameter(Parameter &&) = default;
+
+    Parameter &operator=(Parameter const &) = default;
+    Parameter &operator=(Parameter &&) = default;
+
+    std::unique_ptr<AbstractParameter> to_heap() && override
+    {
+        return std::make_unique<Parameter<Operation::TOUCH>>(std::move(*this));
+    }
+};
+
+template <>
+struct OPENPMDAPI_EXPORT Parameter<Operation::SET_WRITTEN>
+    : public AbstractParameter
+{
+    explicit Parameter() = default;
+
+    Parameter(Parameter const &) = default;
+    Parameter(Parameter &&) = default;
+
+    Parameter &operator=(Parameter const &) = default;
+    Parameter &operator=(Parameter &&) = default;
+
+    std::unique_ptr<AbstractParameter> to_heap() && override
+    {
+        return std::make_unique<Parameter<Operation::SET_WRITTEN>>(
+            std::move(*this));
+    }
+
+    bool target_status = false;
 };
 
 /** @brief Self-contained description of a single IO operation.
@@ -722,19 +744,10 @@ public:
         , parameter{std::move(p).to_heap()}
     {}
 
-    explicit IOTask(IOTask const &other)
-        : writable{other.writable}
-        , operation{other.operation}
-        , parameter{other.parameter}
-    {}
-
-    IOTask &operator=(IOTask const &other)
-    {
-        writable = other.writable;
-        operation = other.operation;
-        parameter = other.parameter;
-        return *this;
-    }
+    IOTask(IOTask const &other);
+    IOTask(IOTask &&other) noexcept;
+    IOTask &operator=(IOTask const &other);
+    IOTask &operator=(IOTask &&other) noexcept;
 
     Writable *writable;
     Operation operation;

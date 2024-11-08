@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include "openPMD/Error.hpp"
 #include "openPMD/IO/AbstractIOHandler.hpp"
 #include "openPMD/IO/Access.hpp"
 #include "openPMD/IO/Format.hpp"
@@ -27,6 +28,7 @@
 #include "openPMD/IterationEncoding.hpp"
 #include "openPMD/Streaming.hpp"
 #include "openPMD/WriteIterations.hpp"
+#include "openPMD/auxiliary/TypeTraits.hpp"
 #include "openPMD/auxiliary/Variant.hpp"
 #include "openPMD/backend/Attributable.hpp"
 #include "openPMD/backend/Container.hpp"
@@ -40,10 +42,15 @@
 
 #include <cstdint> // uint64_t
 #include <deque>
+#include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
+#include <tuple>
+#include <variant>
 
 // expose private and protected members for invasive testing
 #ifndef OPENPMD_private
@@ -64,8 +71,13 @@ namespace internal
      *
      * (Not movable or copyable)
      *
+     * Class is final since our std::shared_ptr<Data_t> pattern has the little
+     * disadvantage that child constructors overwrite the parent constructors.
+     * Since the SeriesData constructor does some initialization, making this
+     * class final avoids stumbling over this pitfall.
+     *
      */
-    class SeriesData : public AttributableData
+    class SeriesData final : public AttributableData
     {
     public:
         explicit SeriesData() = default;
@@ -187,7 +199,40 @@ namespace internal
          */
         std::optional<ParsePreference> m_parsePreference;
 
+        std::optional<std::function<AbstractIOHandler *(Series &)>>
+            m_deferred_initialization = std::nullopt;
+
         void close();
+
+#if openPMD_HAVE_MPI
+        /*
+         * @todo Once we have separate MPI headers, move this there.
+         */
+        std::optional<MPI_Comm> m_communicator;
+#endif
+
+        struct NoSourceSpecified
+        {};
+        struct SourceSpecifiedViaJSON
+        {
+            std::string value;
+        };
+        struct SourceSpecifiedManually
+        {
+            std::string value;
+        };
+
+        struct RankTableData
+        {
+            Attributable m_attributable;
+            std::variant<
+                NoSourceSpecified,
+                SourceSpecifiedViaJSON,
+                SourceSpecifiedManually>
+                m_rankTableSource;
+            std::optional<chunk_assignment::RankMeta> m_bufferedRead;
+        };
+        RankTableData m_rankTable;
     }; // SeriesData
 
     class SeriesInternal;
@@ -210,16 +255,25 @@ class Series : public Attributable
     friend class ReadIterations;
     friend class SeriesIterator;
     friend class internal::SeriesData;
+    friend class internal::AttributableData;
     friend class WriteIterations;
-
-protected:
-    // Should not be called publicly, only by implementing classes
-    Series(std::shared_ptr<internal::SeriesData>);
 
 public:
     explicit Series();
 
 #if openPMD_HAVE_MPI
+    /**
+     * @brief Construct a new Series
+     *
+     * For further details, refer to the documentation of the non-MPI overload.
+     *
+     * @param filepath The file path.
+     * @param at Access mode.
+     * @param comm The MPI communicator.
+     * @param options Advanced backend configuration via JSON.
+     *      May be specified as a JSON-formatted string directly, or as a path
+     *      to a JSON textfile, prepended by an at sign '@'.
+     */
     Series(
         std::string const &filepath,
         Access at,
@@ -228,20 +282,63 @@ public:
 #endif
 
     /**
-     * @brief Construct a new Series
+     * @brief Construct a new Series.
      *
-     * @param filepath The backend will be determined by the filepath extension.
+     * For details on access modes, JSON/TOML configuration and iteration
+     * encoding, refer to:
+     *
+     * * https://openpmd-api.readthedocs.io/en/latest/usage/workflow.html#access-modes
+     * * https://openpmd-api.readthedocs.io/en/latest/details/backendconfig.html
+     * * https://openpmd-api.readthedocs.io/en/latest/usage/concepts.html#iteration-and-series
+     *
+     * In case of file-based iteration encoding, the file names for each
+     * iteration are determined by an expansion pattern that must be specified.
+     * It takes one out of two possible forms:
+     *
+     * 1. Simple form: %T is replaced with the iteration index, e.g.
+     *    `simData_%T.bp` becomes `simData_50.bp`.
+     * 2. Padded form: e.g. %06T is replaced with the iteration index padded to
+     *    at least six digits. `simData_%06T.bp` becomes `simData_000050.bp`.
+     *
+     * The backend is determined:
+     *
+     * 1. Explicitly via the JSON/TOML parameter `backend`, e.g. `{"backend":
+     *    "adios2"}`.
+     * 2. Otherwise implicitly from the filename extension, e.g.
+     *    `simData_%T.h5`.
+     *
+     * The filename extension can be replaced with a globbing pattern %E.
+     * It will be replaced with an automatically determined file name extension:
+     *
+     * 1. In CREATE mode: The extension is set to a backend-specific default
+     *    extension. This requires that the backend is specified via JSON/TOML.
+     * 2. In READ_ONLY, READ_WRITE and READ_LINEAR modes: These modes require
+     *    that files already exist on disk. The disk will be scanned for files
+     *    that match the pattern and the resulting file extension will be used.
+     *    If the result is ambiguous or no such file is found, an error is
+     *    raised.
+     * 3. In APPEND mode: Like (2.), except if no matching file is found. In
+     *    that case, the procedure of (1.) is used, owing to the fact that
+     *    APPEND mode can be used to create new datasets.
+     *
+     * @param filepath The file path.
      * @param at Access mode.
      * @param options Advanced backend configuration via JSON.
-     *      May be specified as a JSON-formatted string directly, or as a path
-     *      to a JSON textfile, prepended by an at sign '@'.
+     *      May be specified as a JSON/TOML-formatted string directly, or as a
+     *      path to a JSON/TOML textfile, prepended by an at sign '@'.
      */
     Series(
         std::string const &filepath,
         Access at,
         std::string const &options = "{}");
 
-    virtual ~Series() = default;
+    Series(Series const &) = default;
+    Series(Series &&) = default;
+
+    Series &operator=(Series const &) = default;
+    Series &operator=(Series &&) = default;
+
+    ~Series() override = default;
 
     /**
      * An unsigned integer type, used to identify Iterations in a Series.
@@ -323,6 +420,32 @@ public:
      * @return  Reference to modified series.
      */
     Series &setMeshesPath(std::string const &meshesPath);
+
+    /**
+     * @throw   no_such_attribute_error If optional attribute is not present.
+     * @param collective Run this read operation collectively.
+                There might be an enormous IO overhead if running this
+                operation non-collectively.
+                To make this explicit to users, there is no default parameter.
+                Parameter is ignored if compiling without MPI support, (it is
+                present for the sake of a consistent API).
+     * @return  Vector with a String per (writing) MPI rank, indicating user-
+     *          defined meta information per rank. Example: host name.
+     */
+#if openPMD_HAVE_MPI
+    chunk_assignment::RankMeta rankTable(bool collective);
+#else
+    chunk_assignment::RankMeta rankTable(bool collective = false);
+#endif
+
+    /**
+     * @brief Set the Mpi Ranks Meta Info attribute, i.e. a Vector with
+     *        a String per (writing) MPI rank, indicating user-
+     *        defined meta information per rank. Example: host name.
+     *
+     * @return Reference to modified series.
+     */
+    Series &setRankTable(std::string const &myRankInfo);
 
     /**
      * @throw   no_such_attribute_error If optional attribute is not present.
@@ -495,6 +618,7 @@ public:
      * @return String of a pattern for data backend.
      */
     std::string backend() const;
+    std::string backend();
 
     /** Execute all required remaining IO operations to write or read data.
      *
@@ -569,6 +693,17 @@ public:
      */
     void close();
 
+    /**
+     * This overrides Attributable::iterationFlush() which will fail on Series.
+     */
+    template <typename X = void, typename... Args>
+    auto iterationFlush(Args &&...)
+    {
+        static_assert(
+            auxiliary::dependent_false_v<X>,
+            "Cannot call this on an instance of Series.");
+    }
+
     // clang-format off
 OPENPMD_private
     // clang-format on
@@ -579,9 +714,10 @@ OPENPMD_private
     using iterations_t = decltype(internal::SeriesData::iterations);
     using iterations_iterator = iterations_t::iterator;
 
-    std::shared_ptr<internal::SeriesData> m_series = nullptr;
+    using Data_t = internal::SeriesData;
+    std::shared_ptr<Data_t> m_series = nullptr;
 
-    inline internal::SeriesData &get()
+    inline Data_t &get()
     {
         if (m_series)
         {
@@ -594,7 +730,7 @@ OPENPMD_private
         }
     }
 
-    inline internal::SeriesData const &get() const
+    inline Data_t const &get() const
     {
         if (m_series)
         {
@@ -605,6 +741,13 @@ OPENPMD_private
             throw std::runtime_error(
                 "[Series] Cannot use default-constructed Series.");
         }
+    }
+
+    inline void setData(std::shared_ptr<internal::SeriesData> series)
+    {
+        m_series = std::move(series);
+        iterations = m_series->iterations;
+        Attributable::setData(m_series);
     }
 
     std::unique_ptr<ParsedInput> parseInput(std::string);
@@ -621,7 +764,21 @@ OPENPMD_private
     void parseJsonOptions(TracingJSON &options, ParsedInput &);
     bool hasExpansionPattern(std::string filenameWithExtension);
     bool reparseExpansionPattern(std::string filenameWithExtension);
-    void init(std::unique_ptr<AbstractIOHandler>, std::unique_ptr<ParsedInput>);
+    template <typename... MPI_Communicator>
+    void init(
+        std::string const &filepath,
+        Access at,
+        std::string const &options,
+        MPI_Communicator &&...);
+    template <typename TracingJSON, typename... MPI_Communicator>
+    std::tuple<std::unique_ptr<ParsedInput>, TracingJSON> initIOHandler(
+        std::string const &filepath,
+        std::string const &options,
+        Access at,
+        bool resolve_generic_extension,
+        MPI_Communicator &&...);
+    void initSeries(
+        std::unique_ptr<AbstractIOHandler>, std::unique_ptr<ParsedInput>);
     void initDefaults(IterationEncoding, bool initAll = false);
     /**
      * @brief Internal call for flushing a Series.
@@ -637,12 +794,12 @@ OPENPMD_private
     std::future<void> flush_impl(
         iterations_iterator begin,
         iterations_iterator end,
-        internal::FlushParams flushParams,
+        internal::FlushParams const &flushParams,
         bool flushIOHandler = true);
     void flushFileBased(
         iterations_iterator begin,
         iterations_iterator end,
-        internal::FlushParams flushParams,
+        internal::FlushParams const &flushParams,
         bool flushIOHandler = true);
     /*
      * Group-based and variable-based iteration layouts share a lot of logic
@@ -654,10 +811,11 @@ OPENPMD_private
     void flushGorVBased(
         iterations_iterator begin,
         iterations_iterator end,
-        internal::FlushParams flushParams,
+        internal::FlushParams const &flushParams,
         bool flushIOHandler = true);
     void flushMeshesPath();
     void flushParticlesPath();
+    void flushRankTable();
     void readFileBased();
     void readOneIterationFileBased(std::string const &filePath);
     /**
@@ -673,7 +831,7 @@ OPENPMD_private
      * ReadIterations since those methods should be aware when the current step
      * is broken).
      */
-    std::optional<std::deque<IterationIndex_t> > readGorVBased(
+    std::optional<std::deque<IterationIndex_t>> readGorVBased(
         bool do_always_throw_errors,
         bool init,
         std::set<IterationIndex_t> const &ignoreIterations = {});
@@ -743,8 +901,18 @@ OPENPMD_private
      * Returns the current content of the /data/snapshot attribute.
      * (We could also add this to the public API some time)
      */
-    std::optional<std::vector<IterationIndex_t> > currentSnapshot() const;
+    std::optional<std::vector<IterationIndex_t>> currentSnapshot() const;
+
+    AbstractIOHandler *runDeferredInitialization();
+
+    AbstractIOHandler *IOHandler();
+    AbstractIOHandler const *IOHandler() const;
 }; // Series
+
+namespace debug
+{
+    void printDirty(Series const &);
+}
 } // namespace openPMD
 
 // Make sure that this one is always included if Series.hpp is included,

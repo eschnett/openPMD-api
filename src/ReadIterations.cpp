@@ -74,7 +74,6 @@ void SeriesIterator::initSeriesInLinearReadMode()
         case IE::variableBased: {
             Parameter<Operation::OPEN_FILE> fOpen;
             fOpen.name = series.get().m_name;
-            fOpen.encoding = series.iterationEncoding();
             series.IOHandler()->enqueue(IOTask(&series, fOpen));
             series.IOHandler()->flush(internal::defaultFlushParams);
             using PP = Parameter<Operation::OPEN_FILE>::ParsePreference;
@@ -123,11 +122,12 @@ void SeriesIterator::close()
 }
 
 SeriesIterator::SeriesIterator(
-    Series series_in, std::optional<internal::ParsePreference> parsePreference)
+    Series const &series_in,
+    std::optional<internal::ParsePreference> const &parsePreference)
     : m_data{std::make_shared<std::optional<SharedData>>(std::in_place)}
 {
     auto &data = get();
-    data.parsePreference = std::move(parsePreference);
+    data.parsePreference = parsePreference;
     /*
      * Since the iterator is stored in
      * internal::SeriesData::m_sharedStatefulIterator,
@@ -136,7 +136,8 @@ SeriesIterator::SeriesIterator(
      * This is ok due to the usual C++ iterator invalidation workflows
      * (deleting the original container invalidates the iterator).
      */
-    data.series = Series(std::shared_ptr<internal::SeriesData>(
+    data.series = Series();
+    data.series->setData(std::shared_ptr<internal::SeriesData>(
         series_in.m_series.get(), [](auto const *) {}));
     auto &series = data.series.value();
     if (series.IOHandler()->m_frontendAccess == Access::READ_LINEAR &&
@@ -628,7 +629,7 @@ ReadIterations::ReadIterations(
     Series series,
     Access access,
     std::optional<internal::ParsePreference> parsePreference)
-    : m_series(std::move(series)), m_parsePreference(std::move(parsePreference))
+    : m_series(std::move(series)), m_parsePreference(parsePreference)
 {
     auto &data = m_series.get();
     if (access == Access::READ_LINEAR && !data.m_sharedStatefulIterator)

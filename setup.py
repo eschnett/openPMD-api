@@ -22,7 +22,7 @@ class CMakeBuild(build_ext):
             out = subprocess.check_output(['cmake', '--version'])
         except OSError:
             raise RuntimeError(
-                "CMake 3.15.0+ must be installed to build the following " +
+                "CMake 3.22.0+ must be installed to build the following " +
                 "extensions: " +
                 ", ".join(e.name for e in self.extensions))
 
@@ -30,8 +30,8 @@ class CMakeBuild(build_ext):
             r'version\s*([\d.]+)',
             out.decode()
         ).group(1))
-        if cmake_version < parse('3.15.0'):
-            raise RuntimeError("CMake >= 3.15.0 is required")
+        if cmake_version < parse('3.22.0'):
+            raise RuntimeError("CMake >= 3.22.0 is required")
 
         for ext in self.extensions:
             self.build_extension(ext)
@@ -44,12 +44,19 @@ class CMakeBuild(build_ext):
         if not extdir.endswith(os.path.sep):
             extdir += os.path.sep
 
+        pyv = sys.version_info
         cmake_args = [
+            # Python: use the calling interpreter in CMake
+            # https://cmake.org/cmake/help/latest/module/FindPython.html#hints
+            # https://cmake.org/cmake/help/latest/command/find_package.html#config-mode-version-selection
+            '-DPython_ROOT_DIR=' + sys.prefix,
+            f'-DPython_FIND_VERSION={pyv.major}.{pyv.minor}.{pyv.micro}',
+            '-DPython_FIND_VERSION_EXACT=TRUE',
+            '-DPython_FIND_STRATEGY=LOCATION',
             '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=' +
             os.path.join(extdir, "openpmd_api"),
             # '-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=' + extdir,
             '-DopenPMD_PYTHON_OUTPUT_DIRECTORY=' + extdir,
-            '-DPython_EXECUTABLE=' + sys.executable,
             '-DopenPMD_USE_PYTHON:BOOL=ON',
             # variants
             '-DopenPMD_USE_MPI:BOOL=' + openPMD_USE_MPI,
@@ -60,16 +67,19 @@ class CMakeBuild(build_ext):
             '-DopenPMD_BUILD_TESTING:BOOL=' + BUILD_TESTING,
             # static/shared libs
             '-DopenPMD_BUILD_SHARED_LIBS:BOOL=' + BUILD_SHARED_LIBS,
-            '-DHDF5_USE_STATIC_LIBRARIES:BOOL=' + HDF5_USE_STATIC_LIBRARIES,
-            '-DADIOS_USE_STATIC_LIBS:BOOL=' + ADIOS_USE_STATIC_LIBS,
             # Unix: rpath to current dir when packaged
-            #       needed for shared (here non-default) builds and ADIOS1
-            #       wrapper libraries
+            #       needed for shared (here non-default) builds
             '-DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON',
             '-DCMAKE_INSTALL_RPATH_USE_LINK_PATH:BOOL=OFF',
             # Windows: has no RPath concept, all `.dll`s must be in %PATH%
             #          or same dir as calling executable
         ]
+        if HDF5_USE_STATIC_LIBRARIES is not None:
+            cmake_args.append('-DHDF5_USE_STATIC_LIBRARIES:BOOL=' +
+                              HDF5_USE_STATIC_LIBRARIES)
+        if ZLIB_USE_STATIC_LIBS is not None:
+            cmake_args.append('-DZLIB_USE_STATIC_LIBS:BOOL=' +
+                              ZLIB_USE_STATIC_LIBS)
         if CMAKE_INTERPROCEDURAL_OPTIMIZATION is not None:
             cmake_args.append('-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=' +
                               CMAKE_INTERPROCEDURAL_OPTIMIZATION)
@@ -128,8 +138,8 @@ with open('./README.md', encoding='utf-8') as f:
 # Work-around for https://github.com/pypa/setuptools/issues/1712
 # note: changed default for SHARED, MPI, TESTING and EXAMPLES
 openPMD_USE_MPI = os.environ.get('openPMD_USE_MPI', 'OFF')
-HDF5_USE_STATIC_LIBRARIES = os.environ.get('HDF5_USE_STATIC_LIBRARIES', 'OFF')
-ADIOS_USE_STATIC_LIBS = os.environ.get('ADIOS_USE_STATIC_LIBS', 'OFF')
+HDF5_USE_STATIC_LIBRARIES = os.environ.get('HDF5_USE_STATIC_LIBRARIES', None)
+ZLIB_USE_STATIC_LIBS = os.environ.get('ZLIB_USE_STATIC_LIBS', None)
 # deprecated: backwards compatibility to <= 0.13.*
 BUILD_SHARED_LIBS = os.environ.get('BUILD_SHARED_LIBS', 'OFF')
 BUILD_TESTING = os.environ.get('BUILD_TESTING', 'OFF')
@@ -171,7 +181,7 @@ with open('./requirements.txt') as f:
 setup(
     name='openPMD-api',
     # note PEP-440 syntax: x.y.zaN but x.y.z.devN
-    version='0.16.0.dev',
+    version='0.17.0.dev',
     author='Axel Huebl, Franz Poeschel, Fabian Koller, Junmin Gu',
     author_email='axelhuebl@lbl.gov, f.poeschel@hzdr.de',
     maintainer='Axel Huebl',
@@ -226,6 +236,8 @@ setup(
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+        'Programming Language :: Python :: 3.13',
         ('License :: OSI Approved :: '
          'GNU Lesser General Public License v3 or later (LGPLv3+)'),
     ],

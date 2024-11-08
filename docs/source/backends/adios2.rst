@@ -48,6 +48,10 @@ Exceptions to this are the BP3 and SST engines which require their endings ``.bp
 
 For file engines, we currently leverage the default ADIOS2 transport parameters, i.e. ``POSIX`` on Unix systems and ``FStream`` on Windows.
 
+.. tip::
+
+   Use the ``adios2.engine.treat_unsupported_engine_as`` :ref:`JSON/TOML parameter <backendconfig-adios2>` for experimentally interacting with an unsupported ADIOS2 engine.
+
 Steps
 -----
 
@@ -56,7 +60,6 @@ In order to activate steps, it is imperative to use the :ref:`Streaming API <usa
 
 ADIOS2 release 2.6.0 contained a bug (fixed in ADIOS 2.7.0, see `PR #2348 <https://github.com/ornladios/ADIOS2/pull/2348>`_) that disallows random-accessing steps in file-based engines.
 With this ADIOS2 release, files written with steps may only be read using the streaming API.
-In order to keep compatibility with older codes reading ADIOS2 files, step-based processing must currently be opted in to via use of the :ref:`JSON parameter<backendconfig>` ``adios2.engine.usesteps = true`` when using a file-based engine such as BP3 or BP4 (usesteps).
 
 Upon reading a file, the ADIOS2 backend will automatically recognize whether it has been written with or without steps, ignoring the JSON option mentioned above.
 Steps are mandatory for streaming-based engines and trying to switch them off will result in a runtime error.
@@ -82,6 +85,7 @@ environment variable                  default    description
 ``OPENPMD_ADIOS2_HAVE_METADATA_FILE`` ``1``      Online creation of the adios journal file (``1``: yes, ``0``: no).
 ``OPENPMD_ADIOS2_NUM_SUBSTREAMS``     ``0``      Number of files to be created, 0 indicates maximum number possible.
 ``OPENPMD_ADIOS2_ENGINE``             ``File``   `ADIOS2 engine <https://adios2.readthedocs.io/en/latest/engines/engines.html>`_
+``OPENPMD_ADIOS2_PRETEND_ENGINE``     *empty*    Pretend that an (unknown) ADIOS2 engine is in fact another one (also see the ``adios2.pretend_engine`` :ref:`parameter <backendconfig-adios2>`).
 ``OPENPMD2_ADIOS2_USE_GROUP_TABLE``   ``0``      Use group table (see below)
 ``OPENPMD_ADIOS2_STATS_LEVEL``        ``0``      whether to generate statistics for variables in ADIOS2. (``1``: yes, ``0``: no).
 ``OPENPMD_ADIOS2_ASYNC_WRITE``        ``0``      ADIOS2 BP5 engine: 1 means setting "AsyncWrite" in ADIOS2 to "on". Flushes will go to the buffer by default (see ``preferred_flush_target``).
@@ -104,6 +108,11 @@ The default behavior may be restored by setting the :ref:`JSON parameter <backen
 
 Best Practice at Large Scale
 ----------------------------
+
+ADIOS2 distinguishes between "heavy" data of arbitrary size (i.e. the "actual" data) and lightweight metadata.
+
+Heavy I/O
+.........
 
 A benefitial configuration depends heavily on:
 
@@ -135,6 +144,24 @@ The preferred backend usually depends on the system's native software stack.
 For fine-tuning at extreme scale or for exotic systems, please refer to the ADIOS2 manual and talk to your filesystem admins and the ADIOS2 authors.
 Be aware that extreme-scale I/O is a research topic after all.
 
+Metadata
+........
+
+ADIOS2 will implicitly aggregate metadata specified from parallel MPI processes.
+Duplicate specification of metadata is eliminated in this process.
+Unlike in HDF5, specifying metadata collectively is not required and is even detrimental to performance.
+The :ref:`JSON/TOML key <backendconfig>` ``adios2.attribute_writing_ranks`` can be used to restrict attribute writing to only a select handful of ranks (most typically a single one).
+The ADIOS2 backend of the openPMD-api will then ignore attributes from all other MPI ranks.
+
+.. tip::
+
+  Treat metadata specification as a collective operation in order to retain compatibility with HDF5, and then specify ``adios2.attribute_writing_ranks = 0`` in order to achieve best performance in ADIOS2.
+
+.. warning::
+
+  The ADIOS2 backend may also use attributes to encode openPMD groups (ref. "group table").
+  The ``adios2.attribute_writing_ranks`` key also applies to those attributes, i.e. also group creation must be treated as collective then (at least on the specified ranks).
+
 Experimental group table feature
 --------------------------------
 
@@ -160,7 +187,6 @@ This feature can be activated via the JSON/TOML key ``adios2.use_group_table = t
 It is fully backward-compatible with the old layout of openPMD in ADIOS2 and mostly forward-compatible (except the support for steps).
 
 The variable-based encoding of openPMD automatically activates the group table feature.
-The group table feature automatically activates the use of ADIOS2 steps (which until version 0.15 was an opt-in feature via ``adios2.engine.usesteps = true``).
 
 Memory usage
 ------------

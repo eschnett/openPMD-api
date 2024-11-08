@@ -1,6 +1,8 @@
 /* Running this test in parallel with MPI requires MPI::Init.
  * To guarantee a correct call to Init, launch the tests manually.
  */
+#include "openPMD/IO/ADIOS/macros.hpp"
+#include "openPMD/IO/Access.hpp"
 #include "openPMD/auxiliary/Environment.hpp"
 #include "openPMD/auxiliary/Filesystem.hpp"
 #include "openPMD/openPMD.hpp"
@@ -75,9 +77,8 @@ TEST_CASE("parallel_multi_series_test", "[parallel]")
     // have multiple serial series alive at the same time
     for (auto const sn : {1, 2, 3})
     {
-        for (auto const &t : myBackends)
+        for (auto const &file_ending : myBackends)
         {
-            auto const file_ending = t;
             std::cout << file_ending << std::endl;
             allSeries.emplace_back(
                 std::string("../samples/parallel_multi_open_test_")
@@ -115,7 +116,7 @@ TEST_CASE("parallel_multi_series_test", "[parallel]")
 
 void write_test_zero_extent(
     bool fileBased,
-    std::string file_ending,
+    std::string const &file_ending,
     bool writeAllChunks,
     bool declareFromAll)
 {
@@ -301,8 +302,11 @@ TEST_CASE("hdf5_write_test", "[parallel][hdf5]")
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_r);
     auto mpi_size = static_cast<uint64_t>(mpi_s);
     auto mpi_rank = static_cast<uint64_t>(mpi_r);
-    Series o =
-        Series("../samples/parallel_write.h5", Access::CREATE, MPI_COMM_WORLD);
+    Series o = Series(
+        "../samples/parallel_write.h5",
+        Access::CREATE,
+        MPI_COMM_WORLD,
+        "hdf5.independent_stores = false");
 
     o.setAuthor("Parallel HDF5");
     ParticleSpecies &e = o.iterations[1].particles["e"];
@@ -315,9 +319,13 @@ TEST_CASE("hdf5_write_test", "[parallel][hdf5]")
     std::shared_ptr<double> position_local(new double);
     *position_local = position_global[mpi_rank];
 
-    e["position"]["x"].resetDataset(
-        Dataset(determineDatatype(position_local), {mpi_size}));
+    e["position"]["x"].resetDataset(Dataset(
+        determineDatatype(position_local),
+        {mpi_size},
+        "hdf5.dataset.chunks = [1]"));
     e["position"]["x"].storeChunk(position_local, {mpi_rank}, {1});
+
+    o.flush("hdf5.independent_stores = true");
 
     std::vector<uint64_t> positionOffset_global(mpi_size);
     uint64_t posOff{0};
@@ -328,11 +336,20 @@ TEST_CASE("hdf5_write_test", "[parallel][hdf5]")
     std::shared_ptr<uint64_t> positionOffset_local(new uint64_t);
     *positionOffset_local = positionOffset_global[mpi_rank];
 
-    e["positionOffset"]["x"].resetDataset(
-        Dataset(determineDatatype(positionOffset_local), {mpi_size}));
+    e["positionOffset"]["x"].resetDataset(Dataset(
+        determineDatatype(positionOffset_local),
+        {mpi_size},
+        "hdf5.dataset.chunks = [" + std::to_string(mpi_size) + "]"));
     e["positionOffset"]["x"].storeChunk(positionOffset_local, {mpi_rank}, {1});
 
-    o.flush();
+    // Test that chunking settings are not carried over to other datasets.
+    // Just declare a dataset smaller than the previously chunks size to trigger
+    // a failure in case the chunking is erroneously carried over.
+    e["positionOffset"]["y"].resetDataset({Datatype::FLOAT, {1}});
+    e["positionOffset"]["y"].storeChunk(
+        std::make_unique<float>(3.141592654), {0}, {1});
+
+    o.flush("hdf5.independent_stores = false");
 }
 
 TEST_CASE("hdf5_write_test_zero_extent", "[parallel][hdf5]")
@@ -379,7 +396,7 @@ TEST_CASE("no_parallel_hdf5", "[parallel][hdf5]")
 #endif
 
 #if openPMD_HAVE_ADIOS2 && openPMD_HAVE_MPI
-void available_chunks_test(std::string file_ending)
+void available_chunks_test(std::string const &file_ending)
 {
     int r_mpi_rank{-1}, r_mpi_size{-1};
     MPI_Comm_rank(MPI_COMM_WORLD, &r_mpi_rank);
@@ -407,7 +424,8 @@ void available_chunks_test(std::string file_ending)
                << R"END(
             }
         }
-    }
+    },
+    "rank_table": "hostname"
 }
 )END";
 
@@ -515,8 +533,11 @@ TEST_CASE("extend_dataset", "[parallel]")
 #if openPMD_HAVE_ADIOS2 && openPMD_HAVE_MPI
 TEST_CASE("adios_write_test", "[parallel][adios]")
 {
-    Series o =
-        Series("../samples/parallel_write.bp", Access::CREATE, MPI_COMM_WORLD);
+    Series o = Series(
+        "../samples/parallel_write.bp",
+        Access::CREATE,
+        MPI_COMM_WORLD,
+        R"(rank_table= "hostname")");
 
     int size{-1};
     int rank{-1};
@@ -554,6 +575,48 @@ TEST_CASE("adios_write_test", "[parallel][adios]")
     e["positionOffset"]["x"].storeChunk(positionOffset_local, {mpi_rank}, {1});
 
     o.flush();
+    o.close();
+
+    chunk_assignment::RankMeta compare;
+    {
+        auto hostname =
+            host_info::byMethod(host_info::Method::MPI_PROCESSOR_NAME);
+        for (int i = 0; i < size; ++i)
+        {
+            compare[i] = hostname;
+        }
+    }
+
+    {
+        Series i(
+            "../samples/parallel_write.bp",
+            Access::READ_LINEAR,
+            MPI_COMM_WORLD);
+        i.parseBase();
+        REQUIRE(i.rankTable(/* collective = */ true) == compare);
+    }
+    {
+        Series i(
+            "../samples/parallel_write.bp",
+            Access::READ_LINEAR,
+            MPI_COMM_WORLD);
+        i.parseBase();
+        REQUIRE(i.rankTable(/* collective = */ false) == compare);
+    }
+    {
+        Series i(
+            "../samples/parallel_write.bp",
+            Access::READ_RANDOM_ACCESS,
+            MPI_COMM_WORLD);
+        REQUIRE(i.rankTable(/* collective = */ true) == compare);
+    }
+    {
+        Series i(
+            "../samples/parallel_write.bp",
+            Access::READ_RANDOM_ACCESS,
+            MPI_COMM_WORLD);
+        REQUIRE(i.rankTable(/* collective = */ false) == compare);
+    }
 }
 
 TEST_CASE("adios_write_test_zero_extent", "[parallel][adios]")
@@ -628,7 +691,7 @@ TEST_CASE("hzdr_adios_sample_content_test", "[parallel][adios2][bp3]")
 #endif
 
 #if openPMD_HAVE_MPI
-void write_4D_test(std::string file_ending)
+void write_4D_test(std::string const &file_ending)
 {
     int mpi_s{-1};
     int mpi_r{-1};
@@ -662,7 +725,7 @@ TEST_CASE("write_4D_test", "[parallel]")
     }
 }
 
-void write_makeconst_some(std::string file_ending)
+void write_makeconst_some(std::string const &file_ending)
 {
     int mpi_s{-1};
     int mpi_r{-1};
@@ -695,7 +758,7 @@ TEST_CASE("write_makeconst_some", "[parallel]")
     }
 }
 
-void close_iteration_test(std::string file_ending)
+void close_iteration_test(std::string const &file_ending)
 {
     int i_mpi_rank{-1}, i_mpi_size{-1};
     MPI_Comm_rank(MPI_COMM_WORLD, &i_mpi_rank);
@@ -706,7 +769,8 @@ void close_iteration_test(std::string file_ending)
 
     std::vector<int> data{2, 4, 6, 8};
     // { // we do *not* need these parentheses
-    Series write(name, Access::CREATE, MPI_COMM_WORLD);
+    Series write(
+        name, Access::CREATE, MPI_COMM_WORLD, R"(rank_table= "hostname")");
     {
         Iteration it0 = write.iterations[0];
         auto E_x = it0.meshes["E"]["x"];
@@ -755,6 +819,42 @@ void close_iteration_test(std::string file_ending)
         auto read_again = E_x_read.loadChunk<int>({0, 0}, {mpi_size, 4});
         REQUIRE_THROWS(read.flush());
     }
+
+    chunk_assignment::RankMeta compare;
+    {
+        auto hostname =
+            host_info::byMethod(host_info::Method::MPI_PROCESSOR_NAME);
+        for (unsigned i = 0; i < mpi_size; ++i)
+        {
+            compare[i] = hostname;
+        }
+    }
+
+    for (auto const &filename :
+         {"../samples/close_iterations_parallel_%T.",
+          "../samples/close_iterations_parallel_0.",
+          "../samples/close_iterations_parallel_1."})
+    {
+        for (auto const &[at, read_collectively] :
+             {std::make_pair(Access::READ_LINEAR, true),
+              std::make_pair(Access::READ_LINEAR, false),
+              std::make_pair(Access::READ_RANDOM_ACCESS, true),
+              std::make_pair(Access::READ_RANDOM_ACCESS, false)})
+        {
+            std::cout << filename << file_ending << "\t"
+                      << (at == Access::READ_LINEAR ? "linear" : "random")
+                      << "\t" << read_collectively << std::endl;
+            Series i(filename + file_ending, at, MPI_COMM_WORLD);
+            if (at == Access::READ_LINEAR)
+            {
+                i.parseBase();
+            }
+            // Need this in file-based iteration encoding
+            i.iterations.begin()->second.open();
+            REQUIRE(
+                i.rankTable(/* collective = */ read_collectively) == compare);
+        }
+    }
 }
 
 TEST_CASE("close_iteration_test", "[parallel]")
@@ -765,7 +865,7 @@ TEST_CASE("close_iteration_test", "[parallel]")
     }
 }
 
-void file_based_write_read(std::string file_ending)
+void file_based_write_read(std::string const &file_ending)
 {
     namespace io = openPMD;
 
@@ -836,7 +936,10 @@ void file_based_write_read(std::string file_ending)
                 });
 
             auto dataset = io::Dataset(
-                io::determineDatatype<precision>(), {global_Nx, global_Nz});
+                io::determineDatatype<precision>(),
+                {global_Nx, global_Nz},
+                "hdf5.dataset.chunks = [" + std::to_string(global_Nx) + ", " +
+                    std::to_string(local_Nz) + "]");
             E_x.resetDataset(dataset);
 
             Offset chunk_offset = {0, local_Nz * mpi_rank};
@@ -872,7 +975,7 @@ TEST_CASE("file_based_write_read", "[parallel]")
     }
 }
 
-void hipace_like_write(std::string file_ending)
+void hipace_like_write(std::string const &file_ending)
 {
     namespace io = openPMD;
 
@@ -933,10 +1036,16 @@ void hipace_like_write(std::string file_ending)
     int const last_step = 100;
     int const my_first_step = i_mpi_rank * int(local_Nz);
     int const all_last_step = last_step + (i_mpi_size - 1) * int(local_Nz);
+
+    bool participate_in_barrier = true;
     for (int first_rank_step = 0; first_rank_step < all_last_step;
          ++first_rank_step)
     {
-        MPI_Barrier(MPI_COMM_WORLD);
+        if (participate_in_barrier)
+        {
+            MPI_Barrier(MPI_COMM_WORLD);
+        }
+        participate_in_barrier = true;
 
         // first_rank_step: this step will "lead" the opening of an output step
         // step on the local rank
@@ -975,16 +1084,25 @@ void hipace_like_write(std::string file_ending)
 
         // has this ranks started computations yet?
         if (step < 0)
+        {
+            participate_in_barrier = false;
             continue;
+        }
         // has this ranks stopped computations?
         if (step > last_step)
+        {
+            participate_in_barrier = false;
             continue;
+        }
         // does this rank contribute to with output currently?
         bool const rank_in_output_step =
             std::find(iterations.begin(), iterations.end(), step) !=
             iterations.end();
         if (!rank_in_output_step)
+        {
+            participate_in_barrier = false;
             continue;
+        }
 
         // now we write (parallel, independent I/O)
         auto it = series.iterations[step];
@@ -1034,6 +1152,40 @@ TEST_CASE("hipace_like_write", "[parallel]")
     {
         hipace_like_write(t);
     }
+}
+#endif
+
+#if openPMD_HAVE_ADIOS2 && openPMD_HAS_ADIOS_2_9 && openPMD_HAVE_MPI
+TEST_CASE("independent_write_with_collective_flush", "[parallel]")
+{
+    Series write(
+        "../samples/independent_write_with_collective_flush.bp5",
+        Access::CREATE,
+        MPI_COMM_WORLD,
+        "adios2.engine.preferred_flush_target = \"buffer\"");
+    write.seriesFlush();
+    int size, rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    auto iteration = write.iterations[0];
+    auto E_x = iteration.meshes["E"]["x"];
+    E_x.resetDataset({Datatype::DOUBLE, {10}});
+    write.flush();
+    if (rank == 1)
+    {
+        E_x.storeChunk(
+            std::unique_ptr<double[]>{new double[10]{4.2}}, {0}, {10});
+    }
+    /*
+     * Now, the iteration is dirty only on rank 1. But the following flush must
+     * run collectively anyway. The test has been designed in such a way that
+     * the PerformDataWrite() call required by the disk flush target will
+     * conflict with the default buffer target that will run in the destructor,
+     * unless the flush in the next line really is collective.
+     */
+    MPI_Barrier(MPI_COMM_WORLD);
+    iteration.iterationFlush("adios2.engine.preferred_flush_target = \"disk\"");
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 #endif
 
@@ -1171,10 +1323,16 @@ clevel = "1"
 doshuffle = "BLOSC_BITSHUFFLE"
 )END";
 
-    std::string writeConfigBP4 = R"END(
+    std::string writeConfigBP4 =
+        R"END(
 [adios2]
 unused = "parameter"
-
+attribute_writing_ranks = 0
+)END"
+#if openPMD_HAS_ADIOS_2_9
+        "use_group_table = true"
+#endif
+        R"END(
 [adios2.engine]
 type = "bp4"
 unused = "as well"
@@ -1397,7 +1555,8 @@ void append_mode(
     std::string const &extension,
     bool variableBased,
     ParseMode parseMode,
-    std::string jsonConfig = "{}")
+    std::string const &jsonConfig = "{}",
+    bool test_read_linear = true)
 {
     std::string filename =
         (variableBased ? "../samples/append/append_variablebased."
@@ -1415,7 +1574,7 @@ void append_mode(
     std::vector<int> data(10, 999);
     auto writeSomeIterations = [&data, mpi_size, mpi_rank](
                                    WriteIterations &&writeIterations,
-                                   std::vector<uint64_t> indices) {
+                                   std::vector<uint64_t> const &indices) {
         for (auto index : indices)
         {
             auto it = writeIterations[index];
@@ -1494,6 +1653,7 @@ void append_mode(
         }
     };
 
+    if (test_read_linear)
     {
         switch (parseMode)
         {
@@ -1618,6 +1778,8 @@ void append_mode(
             write.flush();
         }
         MPI_Barrier(MPI_COMM_WORLD);
+
+        if (test_read_linear)
         {
             Series read(filename, Access::READ_LINEAR, MPI_COMM_WORLD);
             switch (parseMode)
@@ -1683,22 +1845,14 @@ TEST_CASE("append_mode", "[serial]")
 {
     "adios2":
     {
-        "use_group_table": false,
-        "engine":
-        {
-            "usesteps" : true
-        }
+        "use_group_table": false
     }
 })END";
         std::string jsonConfigNew = R"END(
 {
     "adios2":
     {
-        "use_group_table": true,
-        "engine":
-        {
-            "usesteps" : true
-        }
+        "use_group_table": true
     }
 })END";
         if (t == "bp" || t == "bp4" || t == "bp5")
@@ -1712,7 +1866,11 @@ TEST_CASE("append_mode", "[serial]")
              */
 #if HAS_ADIOS_2_8
             append_mode(
-                t, false, ParseMode::LinearWithoutSnapshot, jsonConfigOld);
+                t,
+                false,
+                ParseMode::LinearWithoutSnapshot,
+                jsonConfigOld,
+                /* test_read_linear = */ false);
 #endif
 #if HAS_ADIOS_2_9
             append_mode(t, false, ParseMode::WithSnapshot, jsonConfigNew);
@@ -1772,4 +1930,275 @@ TEST_CASE("unavailable_backend", "[core][parallel]")
     }
 #endif
 }
+
+void joined_dim(std::string const &ext)
+{
+    using type = float;
+    using patchType = uint64_t;
+    constexpr size_t patches_per_rank = 5;
+    constexpr size_t length_of_patch = 10;
+
+    int size{-1};
+    int rank{-1};
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    {
+        Series s(
+            "../samples/joinedDimParallel." + ext,
+            Access::CREATE,
+            MPI_COMM_WORLD);
+        std::vector<UniquePtrWithLambda<type>> writeFrom(patches_per_rank);
+
+        auto it = s.writeIterations()[100];
+
+        Dataset numParticlesDS(
+            determineDatatype<patchType>(), {Dataset::JOINED_DIMENSION});
+        auto numParticles =
+            it.particles["e"]
+                .particlePatches["numParticles"][RecordComponent::SCALAR];
+        auto numParticlesOffset =
+            it.particles["e"]
+                .particlePatches["numParticlesOffset"][RecordComponent::SCALAR];
+        numParticles.resetDataset(numParticlesDS);
+        numParticlesOffset.resetDataset(numParticlesDS);
+
+        auto patchOffset = it.particles["e"].particlePatches["offset"]["x"];
+        auto patchExtent = it.particles["e"].particlePatches["extent"]["x"];
+        Dataset particlePatchesDS(
+            determineDatatype<float>(), {Dataset::JOINED_DIMENSION});
+        patchOffset.resetDataset(particlePatchesDS);
+        patchExtent.resetDataset(particlePatchesDS);
+
+        float start_value = rank * patches_per_rank * length_of_patch;
+        for (size_t i = 0; i < 5; ++i)
+        {
+            writeFrom[i] = UniquePtrWithLambda<type>(
+                new type[length_of_patch],
+                [](auto const *ptr) { delete[] ptr; });
+            std::iota(
+                writeFrom[i].get(),
+                writeFrom[i].get() + 10,
+                start_value + length_of_patch * i);
+            patchOffset.store<type>(start_value + length_of_patch * i);
+        }
+
+        auto epx = it.particles["e"]["position"]["x"];
+        Dataset ds(determineDatatype<type>(), {Dataset::JOINED_DIMENSION});
+        epx.resetDataset(ds);
+
+        size_t counter = 0;
+        for (auto &chunk : writeFrom)
+        {
+            epx.storeChunk(std::move(chunk), {}, {length_of_patch});
+            numParticles.store<patchType>(length_of_patch);
+            /*
+             * For the sake of the test case, we know that the
+             * numParticlesOffset has this value. In general, the purpose of the
+             * joined array is that we don't need to know these values, so the
+             * specification of particle patches is somewhat difficult.
+             */
+            numParticlesOffset.store<patchType>(
+                start_value + counter++ * length_of_patch);
+            patchExtent.store<type>(10);
+        }
+        writeFrom.clear();
+        it.close();
+        s.close();
+    }
+
+    {
+        Series s(
+            "../samples/joinedDimParallel." + ext,
+            Access::READ_ONLY,
+            MPI_COMM_WORLD);
+        auto it = s.iterations[100];
+        auto e = it.particles["e"];
+
+        auto particleData = e["position"]["x"].loadChunk<type>();
+        auto numParticles =
+            e.particlePatches["numParticles"][RecordComponent::SCALAR]
+                .load<patchType>();
+        auto numParticlesOffset =
+            e.particlePatches["numParticlesOffset"][RecordComponent::SCALAR]
+                .load<patchType>();
+        auto patchOffset = e.particlePatches["offset"]["x"].load<type>();
+        auto patchExtent = e.particlePatches["extent"]["x"].load<type>();
+
+        it.close();
+
+        // check validity of particle patches
+        auto numPatches =
+            e.particlePatches["numParticlesOffset"][RecordComponent::SCALAR]
+                .getExtent()[0];
+        REQUIRE(
+            e.particlePatches["numParticles"][RecordComponent::SCALAR]
+                .getExtent()[0] == numPatches);
+        for (size_t i = 0; i < numPatches; ++i)
+        {
+            for (size_t j = 0; j < numParticles.get()[i]; ++j)
+            {
+                REQUIRE(
+                    patchOffset.get()[i] <=
+                    particleData.get()[numParticlesOffset.get()[i] + j]);
+                REQUIRE(
+                    particleData.get()[numParticlesOffset.get()[i] + j] <
+                    patchOffset.get()[i] + patchExtent.get()[i]);
+            }
+        }
+
+        /*
+         * Check that joined array joins early writes before later writes from
+         * the same rank
+         */
+        for (size_t i = 0; i < size * length_of_patch * patches_per_rank; ++i)
+        {
+            REQUIRE(float(i) == particleData.get()[i]);
+        }
+        for (size_t i = 0; i < size * patches_per_rank; ++i)
+        {
+            REQUIRE(length_of_patch * i == numParticlesOffset.get()[i]);
+            REQUIRE(type(length_of_patch * i) == patchOffset.get()[i]);
+        }
+    }
+}
+
+TEST_CASE("joined_dim", "[parallel]")
+{
+#if 100000000 * ADIOS2_VERSION_MAJOR + 1000000 * ADIOS2_VERSION_MINOR +        \
+        10000 * ADIOS2_VERSION_PATCH + 100 * ADIOS2_VERSION_TWEAK >=           \
+    209000000
+    constexpr char const *supportsJoinedDims[] = {"bp", "bp4", "bp5"};
+#else
+    // no zero-size arrays
+    std::vector<char const *> supportsJoinedDims;
+#endif
+    for (auto const &t : testedFileExtensions())
+    {
+        for (auto const supported : supportsJoinedDims)
+        {
+            if (t == supported)
+            {
+                joined_dim(t);
+                break;
+            }
+        }
+    }
+}
+
+#if openPMD_HAVE_ADIOS2_BP5
+// Parallel version of the same test from SerialIOTest.cpp
+TEST_CASE("adios2_flush_via_step")
+{
+    int size_i(0), rank_i(0);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank_i);
+    MPI_Comm_size(MPI_COMM_WORLD, &size_i);
+    Extent::value_type const size(size_i), rank(rank_i);
+
+    Series write(
+        "../samples/adios2_flush_via_step_parallel/simData_%T.bp5",
+        Access::CREATE,
+        MPI_COMM_WORLD,
+        R"(adios2.engine.parameters.FlattenSteps = "on")");
+    std::vector<float> data(10);
+    for (Iteration::IterationIndex_t i = 0; i < 5; ++i)
+    {
+        Iteration it = write.writeIterations()[i];
+        auto E_x = it.meshes["E"]["x"];
+        E_x.resetDataset({Datatype::FLOAT, {size, 10, 10}});
+        for (Extent::value_type j = 0; j < 10; ++j)
+        {
+            std::iota(
+                data.begin(), data.end(), i * 100 * size + rank * 100 + j * 10);
+            E_x.storeChunk(data, {rank, j, 0}, {1, 1, 10});
+            write.flush(R"(adios2.engine.preferred_flush_target = "new_step")");
+        }
+        it.close();
+    }
+
+#if openPMD_HAS_ADIOS_2_10_1
+    for (auto access : {Access::READ_RANDOM_ACCESS, Access::READ_LINEAR})
+    {
+        Series read(
+            "../samples/adios2_flush_via_step_parallel/simData_%T.%E",
+            access,
+            MPI_COMM_WORLD);
+        std::vector<float> load_data(100 * size);
+        data.resize(100 * size);
+        for (auto iteration : read.readIterations())
+        {
+            std::iota(
+                data.begin(),
+                data.end(),
+                iteration.iterationIndex * size * 100);
+            iteration.meshes["E"]["x"].loadChunkRaw(
+                load_data.data(), {0, 0, 0}, {size, 10, 10});
+            iteration.close();
+            REQUIRE(load_data == data);
+        }
+    }
+#endif
+
+    /*
+     * Now emulate restarting from a checkpoint after a crash and continuing to
+     * write to the output Series. The semantics of openPMD::Access::APPEND
+     * don't fully fit here since that mode is for adding new Iterations to an
+     * existing Series. What we truly want to do is to continue writing to an
+     * Iteration without replacing it with a new one. So we must use the option
+     * adios2.engine.access_mode = "append" to tell the ADIOS2 backend that new
+     * steps should be added to an existing Iteration file.
+     */
+
+    write = Series(
+        "../samples/adios2_flush_via_step_parallel/simData_%T.bp5",
+        Access::APPEND,
+        MPI_COMM_WORLD,
+        R"(
+            [adios2.engine]
+            access_mode = "append"
+            parameters.FlattenSteps = "on"
+        )");
+    for (Iteration::IterationIndex_t i = 0; i < 5; ++i)
+    {
+        Iteration it = write.writeIterations()[i];
+        auto E_x = it.meshes["E"]["y"];
+        E_x.resetDataset({Datatype::FLOAT, {size, 10, 10}});
+        for (Extent::value_type j = 0; j < 10; ++j)
+        {
+            std::iota(
+                data.begin(), data.end(), i * 100 * size + rank * 100 + j * 10);
+            E_x.storeChunk(data, {rank, j, 0}, {1, 1, 10});
+            write.flush(R"(adios2.engine.preferred_flush_target = "new_step")");
+        }
+        it.close();
+    }
+
+#if openPMD_HAS_ADIOS_2_10_1
+    for (auto access : {Access::READ_RANDOM_ACCESS, Access::READ_LINEAR})
+    {
+        Series read(
+            "../samples/adios2_flush_via_step_parallel/simData_%T.%E",
+            access,
+            MPI_COMM_WORLD);
+        std::vector<float> load_data(100 * size);
+        data.resize(100 * size);
+        for (auto iteration : read.readIterations())
+        {
+            std::iota(
+                data.begin(),
+                data.end(),
+                iteration.iterationIndex * size * 100);
+            iteration.meshes["E"]["x"].loadChunkRaw(
+                load_data.data(), {0, 0, 0}, {size, 10, 10});
+            iteration.meshes["E"]["y"].loadChunkRaw(
+                load_data.data(), {0, 0, 0}, {size, 10, 10});
+            iteration.close();
+            REQUIRE(load_data == data);
+            REQUIRE(load_data == data);
+        }
+    }
+#endif
+}
+#endif
+
 #endif // openPMD_HAVE_ADIOS2 && openPMD_HAVE_MPI

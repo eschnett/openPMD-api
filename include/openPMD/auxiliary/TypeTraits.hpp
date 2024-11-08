@@ -27,6 +27,7 @@
 #include <complex>
 #include <cstddef> // size_t
 #include <memory>
+#include <variant>
 #include <vector>
 
 namespace openPMD::auxiliary
@@ -102,6 +103,27 @@ namespace detail
         constexpr static bool value = true;
         using type = T;
     };
+
+    template <typename>
+    struct IsChar
+    {
+        constexpr static bool value = false;
+    };
+    template <>
+    struct IsChar<char>
+    {
+        constexpr static bool value = true;
+    };
+    template <>
+    struct IsChar<signed char>
+    {
+        constexpr static bool value = true;
+    };
+    template <>
+    struct IsChar<unsigned char>
+    {
+        constexpr static bool value = true;
+    };
 } // namespace detail
 
 template <typename T>
@@ -115,6 +137,9 @@ inline constexpr bool IsPointer_v = detail::IsPointer<T>::value;
 
 template <typename T>
 using IsPointer_t = typename detail::IsPointer<T>::type;
+
+template <typename C>
+inline constexpr bool IsChar_v = detail::IsChar<C>::value;
 
 /** Emulate in the C++ concept ContiguousContainer
  *
@@ -136,4 +161,40 @@ namespace
     template <typename>
     inline constexpr bool dependent_false_v = false;
 } // namespace
+
+namespace detail
+{
+    struct as_shared_pointer
+    {
+        template <typename T>
+        using type = std::shared_ptr<T>;
+    };
+
+    template <typename...>
+    struct append_to_variant;
+
+    template <typename first_type, typename... other_types>
+    struct append_to_variant<first_type, std::variant<other_types...>>
+    {
+        using type = std::variant<first_type, other_types...>;
+    };
+
+    template <typename...>
+    struct map_variant;
+
+    template <typename F, typename first_type, typename... other_types>
+    struct map_variant<F, std::variant<first_type, other_types...>>
+    {
+        using type = typename append_to_variant<
+            typename F::template type<first_type>,
+            typename map_variant<F, std::variant<other_types...>>::type>::type;
+    };
+
+    template <typename F>
+    struct map_variant<F, std::variant<>>
+    {
+        using type = std::variant<>;
+    };
+} // namespace detail
+
 } // namespace openPMD::auxiliary

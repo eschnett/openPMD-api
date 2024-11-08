@@ -19,6 +19,7 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 #include "openPMD/ChunkInfo.hpp"
+#include "openPMD/binding/python/Mpi.hpp"
 
 #include "openPMD/binding/python/Common.hpp"
 
@@ -61,7 +62,7 @@ void init_Chunk(py::module &m)
             },
 
             // __setstate__
-            [](py::tuple t) {
+            [](py::tuple const &t) {
                 // our state tuple has exactly three values
                 if (t.size() != 3)
                     throw std::runtime_error("Invalid state!");
@@ -73,4 +74,30 @@ void init_Chunk(py::module &m)
 
                 return WrittenChunkInfo(offset, extent, sourceID);
             }));
+
+    py::enum_<host_info::Method>(m, "HostInfo")
+        .value("POSIX_HOSTNAME", host_info::Method::POSIX_HOSTNAME)
+        .value("MPI_PROCESSOR_NAME", host_info::Method::MPI_PROCESSOR_NAME)
+#if openPMD_HAVE_MPI
+        .def(
+            "get_collective",
+            [](host_info::Method const &self, py::object &comm) {
+                auto variant = pythonObjectAsMpiComm(comm);
+                if (auto errorMsg = std::get_if<std::string>(&variant))
+                {
+                    throw std::runtime_error("[Series] " + *errorMsg);
+                }
+                else
+                {
+                    return host_info::byMethodCollective(
+                        std::get<MPI_Comm>(variant), self);
+                }
+            })
+#endif
+        .def(
+            "get",
+            [](host_info::Method const &self) {
+                return host_info::byMethod(self);
+            })
+        .def("available", &host_info::methodAvailable);
 }

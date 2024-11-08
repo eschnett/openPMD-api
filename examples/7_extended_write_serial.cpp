@@ -83,7 +83,7 @@ int main()
                 {{io::UnitDimension::M, 1}});
             electrons["displacement"]["x"].setUnitSI(1e-6);
             electrons.erase("displacement");
-            electrons["weighting"][io::RecordComponent::SCALAR]
+            electrons["weighting"]
                 .resetDataset({io::Datatype::FLOAT, {1}})
                 .makeConstant(1.e-5);
         }
@@ -107,11 +107,6 @@ int main()
         auto d = io::Dataset(dtype, io::Extent{2, 5});
         std::string datasetConfig = R"END(
 {
-  "adios1": {
-    "dataset": {
-      "transform": "blosc:compressor=zlib,shuffle=bit,lvl=1;nometa"
-    }
-  },
   "adios2": {
     "dataset": {
       "operators": [
@@ -150,11 +145,8 @@ int main()
         electrons["positionOffset"]["x"].resetDataset(d);
 
         auto dset = io::Dataset(io::determineDatatype<uint64_t>(), {2});
-        electrons.particlePatches["numParticles"][io::RecordComponent::SCALAR]
-            .resetDataset(dset);
-        electrons
-            .particlePatches["numParticlesOffset"][io::RecordComponent::SCALAR]
-            .resetDataset(dset);
+        electrons.particlePatches["numParticles"].resetDataset(dset);
+        electrons.particlePatches["numParticlesOffset"].resetDataset(dset);
 
         dset = io::Dataset(io::Datatype::FLOAT, {2});
         electrons.particlePatches["offset"].setUnitDimension(
@@ -204,12 +196,10 @@ int main()
             electrons["positionOffset"]["x"].storeChunk(
                 partial_particleOff, o, e);
 
-            electrons
-                .particlePatches["numParticles"][io::RecordComponent::SCALAR]
-                .store(i, numParticles);
+            electrons.particlePatches["numParticles"].store(i, numParticles);
             electrons
                 .particlePatches["numParticlesOffset"]
-                                [io::RecordComponent::SCALAR]
+
                 .store(i, numParticlesOffset);
 
             electrons.particlePatches["offset"]["x"].store(

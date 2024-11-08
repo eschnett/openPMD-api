@@ -1,8 +1,8 @@
 # Preamble ####################################################################
 #
-cmake_minimum_required(VERSION 3.15.0)
+cmake_minimum_required(VERSION 3.22.0)
 
-project(openPMD VERSION 0.16.0) # LANGUAGES CXX
+project(openPMD VERSION 0.17.0) # LANGUAGES CXX
 
 # the openPMD "markup"/"schema" standard version
 set(openPMD_STANDARD_VERSION 1.1.0)
@@ -12,17 +12,10 @@ include(${openPMD_SOURCE_DIR}/cmake/openPMDFunctions.cmake)
 
 # CMake policies ##############################################################
 #
-# Search in <PackageName>_ROOT:
-#   https://cmake.org/cmake/help/v3.12/policy/CMP0074.html
-if(POLICY CMP0074)
-    cmake_policy(SET CMP0074 NEW)
-endif()
-
-# We use simple syntax in cmake_dependent_option, so we are compatible with the
-# extended syntax in CMake 3.22+
-# https://cmake.org/cmake/help/v3.22/policy/CMP0127.html
-if(POLICY CMP0127)
-    cmake_policy(SET CMP0127 NEW)
+# CMake 3.24+ tarball download robustness
+#   https://cmake.org/cmake/help/latest/module/ExternalProject.html#url
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
 endif()
 
 
@@ -149,10 +142,13 @@ openpmd_option(PYTHON         "Enable Python bindings"                    AUTO)
 option(openPMD_INSTALL               "Add installation targets"             ON)
 option(openPMD_INSTALL_RPATH         "Add RPATHs to installed binaries"     ON)
 option(openPMD_HAVE_PKGCONFIG        "Generate a .pc file for pkg-config"   ON)
-option(openPMD_USE_INTERNAL_CATCH    "Use internally shipped Catch2"        ON)
-option(openPMD_USE_INTERNAL_PYBIND11 "Use internally shipped pybind11"      ON)
-option(openPMD_USE_INTERNAL_JSON     "Use internally shipped nlohmann-json" ON)
-option(openPMD_USE_INTERNAL_TOML11   "Use internally shipped toml11"        ON)
+
+# superbuild control
+option(openPMD_SUPERBUILD            "Download & build extra dependencies"  ON)
+option(openPMD_USE_INTERNAL_CATCH    "Use internally shipped Catch2"        ${openPMD_SUPERBUILD})
+option(openPMD_USE_INTERNAL_PYBIND11 "Use internally shipped pybind11"      ${openPMD_SUPERBUILD})
+option(openPMD_USE_INTERNAL_JSON     "Use internally shipped nlohmann-json" ${openPMD_SUPERBUILD})
+option(openPMD_USE_INTERNAL_TOML11   "Use internally shipped toml11"        ${openPMD_SUPERBUILD})
 
 option(openPMD_USE_INVASIVE_TESTS "Enable unit tests that modify source code" OFF)
 option(openPMD_USE_VERIFY "Enable internal VERIFY (assert) macro independent of build type" ON)
@@ -224,6 +220,8 @@ endfunction()
 
 # Dependencies ################################################################
 #
+message(STATUS "openPMD-api superbuild: ${openPMD_SUPERBUILD}")
+
 # external library: MPI (optional)
 # Implementation quirks for BullMPI, Clang+MPI and Brew's MPICH
 #   definitely w/o MPI::MPI_C:
@@ -260,32 +258,16 @@ endif()
 
 
 # external library: nlohmann-json (required)
-if(openPMD_USE_INTERNAL_JSON)
-    set(JSON_BuildTests OFF CACHE INTERNAL "")
-    set(JSON_Install OFF CACHE INTERNAL "")  # only used PRIVATE
-    add_subdirectory("${openPMD_SOURCE_DIR}/share/openPMD/thirdParty/json")
-    message(STATUS "nlohmann-json: Using INTERNAL version '3.9.1'")
-else()
-    find_package(nlohmann_json 3.9.1 CONFIG REQUIRED)
-    message(STATUS "nlohmann-json: Found version '${nlohmann_json_VERSION}'")
-endif()
+include(${openPMD_SOURCE_DIR}/cmake/dependencies/json.cmake)
 add_library(openPMD::thirdparty::nlohmann_json INTERFACE IMPORTED)
 target_link_libraries(openPMD::thirdparty::nlohmann_json
     INTERFACE nlohmann_json::nlohmann_json)
 
-# external library: toml11
-if(openPMD_USE_INTERNAL_TOML11)
-    set(toml11_INSTALL OFF CACHE INTERNAL "")
-    add_subdirectory("${openPMD_SOURCE_DIR}/share/openPMD/thirdParty/toml11")
-    message(STATUS "toml11: Using INTERNAL version '3.7.1'")
-else()
-    find_package(toml11 3.7.1 CONFIG REQUIRED)
-    message(STATUS "toml11: Found version '${toml11_VERSION}'")
-endif()
+# external library: toml11 (required)
+include(${openPMD_SOURCE_DIR}/cmake/dependencies/toml11.cmake)
 add_library(openPMD::thirdparty::toml11 INTERFACE IMPORTED)
 target_link_libraries(openPMD::thirdparty::toml11
     INTERFACE toml11::toml11)
-
 
 # external: CUDA (optional)
 if(openPMD_BUILD_EXAMPLES)  # currently only used in examples
@@ -379,21 +361,24 @@ if(openPMD_HDF5_STATUS)
 endif()
 
 # external library: ADIOS2 (optional)
+set(openPMD_REQUIRED_ADIOS2_COMPONENTS CXX)
+if(openPMD_HAVE_MPI)
+    list(APPEND openPMD_REQUIRED_ADIOS2_COMPONENTS MPI)
+endif()
 if(openPMD_USE_ADIOS2 STREQUAL AUTO)
-    find_package(ADIOS2 2.7.0 CONFIG)
+    find_package(ADIOS2 2.7.0 CONFIG COMPONENTS ${openPMD_REQUIRED_ADIOS2_COMPONENTS})
     if(ADIOS2_FOUND)
         set(openPMD_HAVE_ADIOS2 TRUE)
     else()
         set(openPMD_HAVE_ADIOS2 FALSE)
     endif()
 elseif(openPMD_USE_ADIOS2)
-    find_package(ADIOS2 2.7.0 REQUIRED CONFIG)
+    find_package(ADIOS2 2.7.0 REQUIRED CONFIG COMPONENTS ${openPMD_REQUIRED_ADIOS2_COMPONENTS})
     set(openPMD_HAVE_ADIOS2 TRUE)
 else()
     set(openPMD_HAVE_ADIOS2 FALSE)
 endif()
-
-# TODO: Check if ADIOS2 is parallel when openPMD_HAVE_MPI is ON
+unset(openPMD_REQUIRED_ADIOS2_COMPONENTS)
 
 if(openPMD_USE_C)
     set(openPMD_HAVE_C TRUE)
@@ -402,46 +387,7 @@ else()
 endif()
 
 # external library: pybind11 (optional)
-set(_PY_DEV_MODULE Development.Module)
-if(CMAKE_VERSION VERSION_LESS 3.18.0)
-    # over-specification needed for CMake<3.18
-    #   https://pybind11.readthedocs.io/en/latest/compiling.html#findpython-mode
-    #   https://cmake.org/cmake/help/v3.18/module/FindPython.html
-    set(_PY_DEV_MODULE Development)
-endif()
-if(openPMD_USE_PYTHON STREQUAL AUTO)
-    find_package(Python 3.8.0 COMPONENTS Interpreter ${_PY_DEV_MODULE})
-    if(Python_FOUND)
-        if(openPMD_USE_INTERNAL_PYBIND11)
-            add_subdirectory("${openPMD_SOURCE_DIR}/share/openPMD/thirdParty/pybind11")
-            set(openPMD_HAVE_PYTHON TRUE)
-            message(STATUS "pybind11: Using INTERNAL version 2.11.1")
-        else()
-            find_package(pybind11 2.11.1 CONFIG)
-            if(pybind11_FOUND)
-                set(openPMD_HAVE_PYTHON TRUE)
-                message(STATUS "pybind11: Found version '${pybind11_VERSION}'")
-            else()
-                set(openPMD_HAVE_PYTHON FALSE)
-            endif()
-        endif()
-    else()
-        set(openPMD_HAVE_PYTHON FALSE)
-    endif()
-elseif(openPMD_USE_PYTHON)
-    find_package(Python COMPONENTS Interpreter ${_PY_DEV_MODULE} REQUIRED)
-    if(openPMD_USE_INTERNAL_PYBIND11)
-        add_subdirectory("${openPMD_SOURCE_DIR}/share/openPMD/thirdParty/pybind11")
-        set(openPMD_HAVE_PYTHON TRUE)
-        message(STATUS "pybind11: Using INTERNAL version 2.11.1")
-    else()
-        find_package(pybind11 2.11.1 REQUIRED CONFIG)
-        set(openPMD_HAVE_PYTHON TRUE)
-        message(STATUS "pybind11: Found version '${pybind11_VERSION}'")
-    endif()
-else()
-    set(openPMD_HAVE_PYTHON FALSE)
-endif()
+include(${openPMD_SOURCE_DIR}/cmake/dependencies/pybind11.cmake)
 
 
 # Targets #####################################################################
@@ -467,9 +413,9 @@ set(CORE_SOURCE
         src/auxiliary/Date.cpp
         src/auxiliary/Filesystem.cpp
         src/auxiliary/JSON.cpp
+        src/auxiliary/Mpi.cpp
         src/backend/Attributable.cpp
         src/backend/BaseRecordComponent.cpp
-        src/backend/Container.cpp
         src/backend/MeshRecordComponent.cpp
         src/backend/PatchRecord.cpp
         src/backend/PatchRecordComponent.cpp
@@ -490,6 +436,7 @@ set(IO_SOURCE
         src/IO/JSON/JSONIOHandlerImpl.cpp
         src/IO/JSON/JSONFilePosition.cpp
         src/IO/ADIOS/ADIOS2IOHandler.cpp
+        src/IO/ADIOS/ADIOS2File.cpp
         src/IO/ADIOS/ADIOS2Auxiliary.cpp
         src/IO/InvalidatableFile.cpp)
 
@@ -558,18 +505,10 @@ target_include_directories(openPMD PUBLIC
 
 # Catch2 for unit tests
 if(openPMD_BUILD_TESTING)
+    include(${openPMD_SOURCE_DIR}/cmake/dependencies/catch.cmake)
     add_library(openPMD::thirdparty::Catch2 INTERFACE IMPORTED)
-    if(openPMD_USE_INTERNAL_CATCH)
-        target_include_directories(openPMD::thirdparty::Catch2 SYSTEM INTERFACE
-            $<BUILD_INTERFACE:${openPMD_SOURCE_DIR}/share/openPMD/thirdParty/catch2/include>
-        )
-        message(STATUS "Catch2: Using INTERNAL version '2.13.10'")
-    else()
-        find_package(Catch2 2.13.10 REQUIRED CONFIG)
-        target_link_libraries(openPMD::thirdparty::Catch2
+    target_link_libraries(openPMD::thirdparty::Catch2
             INTERFACE Catch2::Catch2)
-        message(STATUS "Catch2: Found version '${Catch2_VERSION}'")
-    endif()
 endif()
 
 if(openPMD_HAVE_MPI)
@@ -670,10 +609,8 @@ if(openPMD_HAVE_PYTHON)
         src/binding/python/openPMD.cpp
         src/binding/python/Access.cpp
         src/binding/python/Attributable.cpp
-        src/binding/python/BaseRecord.cpp
         src/binding/python/BaseRecordComponent.cpp
         src/binding/python/ChunkInfo.cpp
-        src/binding/python/Container.cpp
         src/binding/python/Dataset.cpp
         src/binding/python/Datatype.cpp
         src/binding/python/Error.cpp
@@ -702,14 +639,8 @@ if(openPMD_HAVE_PYTHON)
         endif()
     endif()
     message(STATUS "Python LTO/IPO: ${_USE_PY_LTO}")
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
-        set_target_properties(openPMD.py PROPERTIES
-            INTERPROCEDURAL_OPTIMIZATION ${_USE_PY_LTO})
-    else()
-        if(_USE_PY_LTO)
-            target_link_libraries(openPMD.py PRIVATE pybind11::lto)
-        endif()
-    endif()
+    set_target_properties(openPMD.py PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION ${_USE_PY_LTO})
     unset(_USE_PY_LTO)
 
     if(EMSCRIPTEN)
@@ -1461,16 +1392,18 @@ if(openPMD_BUILD_TESTING)
                         ${MPI_TEST_EXE} ${Python_EXECUTABLE}                       \
                             ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe       \
                             --infile ../samples/git-sample/data00000100.h5         \
-                            --outfile ../samples/git-sample/single_iteration.bp && \
+                            --outfile                                              \
+                                ../samples/git-sample/single_iteration_%T.bp &&    \
                                                                                    \
                         ${MPI_TEST_EXE} ${Python_EXECUTABLE}                       \
                             ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe       \
                             --infile ../samples/git-sample/thetaMode/data%T.h5     \
-                            --outfile ../samples/git-sample/thetaMode/data.bp &&   \
+                            --outfile                                              \
+                                ../samples/git-sample/thetaMode/data_%T.bp &&      \
                                                                                    \
-                        ${Python_EXECUTABLE}                                       \
+                        ${MPI_TEST_EXE} ${Python_EXECUTABLE}                       \
                             ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe       \
-                            --infile ../samples/git-sample/thetaMode/data.bp       \
+                            --infile ../samples/git-sample/thetaMode/data_%T.bp    \
                             --outfile ../samples/git-sample/thetaMode/data%T.json  \
                         "
                     WORKING_DIRECTORY ${openPMD_RUNTIME_OUTPUT_DIRECTORY}
@@ -1479,17 +1412,17 @@ if(openPMD_BUILD_TESTING)
                 add_test(NAME CLI.pipe.py
                     COMMAND sh -c
                         "${Python_EXECUTABLE}                                      \
-                            ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe         \
+                            ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe       \
                             --infile ../samples/git-sample/data%T.h5               \
                             --outfile ../samples/git-sample/data%T.bp &&           \
                                                                                    \
                         ${Python_EXECUTABLE}                                       \
-                            ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe         \
+                            ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe       \
                             --infile ../samples/git-sample/thetaMode/data%T.h5     \
                             --outfile ../samples/git-sample/thetaMode/data%T.bp && \
                                                                                    \
                         ${Python_EXECUTABLE}                                       \
-                            ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe         \
+                            ${openPMD_RUNTIME_OUTPUT_DIRECTORY}/openpmd-pipe       \
                             --infile ../samples/git-sample/thetaMode/data%T.bp     \
                             --outfile ../samples/git-sample/thetaMode/data%T.json  \
                         "
@@ -1546,7 +1479,6 @@ if(openPMD_BUILD_TESTING)
         endif()
     endif()
 endif()
-
 
 # Status Message for Build Options ############################################
 #

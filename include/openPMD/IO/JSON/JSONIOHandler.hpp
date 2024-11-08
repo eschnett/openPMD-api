@@ -24,6 +24,10 @@
 #include "openPMD/IO/AbstractIOHandler.hpp"
 #include "openPMD/IO/JSON/JSONIOHandlerImpl.hpp"
 
+#if openPMD_HAVE_MPI
+#include <mpi.h>
+#endif
+
 namespace openPMD
 {
 class JSONIOHandler : public AbstractIOHandler
@@ -35,6 +39,15 @@ public:
         openPMD::json::TracingJSON config,
         JSONIOHandlerImpl::FileFormat,
         std::string originalExtension);
+#if openPMD_HAVE_MPI
+    JSONIOHandler(
+        std::string path,
+        Access at,
+        MPI_Comm,
+        openPMD::json::TracingJSON config,
+        JSONIOHandlerImpl::FileFormat,
+        std::string originalExtension);
+#endif
 
     ~JSONIOHandler() override;
 

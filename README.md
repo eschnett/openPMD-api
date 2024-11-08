@@ -96,12 +96,12 @@ Our manual shows full [read & write examples](https://openpmd-api.readthedocs.io
 ## Dependencies
 
 Required:
-* CMake 3.15.0+
+* CMake 3.22.0+
 * C++17 capable compiler, e.g., g++ 7+, clang 7+, MSVC 19.15+, icpc 19+, icpx
 
-Shipped internally in `share/openPMD/thirdParty/`:
+Shipped internally (downloaded by CMake unless `openPMD_SUPERBUILD=OFF` is set):
 * [Catch2](https://github.com/catchorg/Catch2) 2.13.10+ ([BSL-1.0](https://github.com/catchorg/Catch2/blob/master/LICENSE.txt))
-* [pybind11](https://github.com/pybind/pybind11) 2.11.1+ ([new BSD](https://github.com/pybind/pybind11/blob/master/LICENSE))
+* [pybind11](https://github.com/pybind/pybind11) 2.13.0+ ([new BSD](https://github.com/pybind/pybind11/blob/master/LICENSE))
 * [NLohmann-JSON](https://github.com/nlohmann/json) 3.9.1+ ([MIT](https://github.com/nlohmann/json/blob/develop/LICENSE.MIT))
 * [toml11](https://github.com/ToruNiina/toml11) 3.7.1+ ([MIT](https://github.com/ToruNiina/toml11/blob/master/LICENSE))
 
@@ -115,8 +115,8 @@ while those can be built either with or without:
 
 Optional language bindings:
 * Python:
-  * Python 3.8 - 3.11
-  * pybind11 2.11.1+
+  * Python 3.8 - 3.13
+  * pybind11 2.13.0+
   * numpy 1.15+
   * mpi4py 2.1+ (optional, for MPI)
   * pandas 1.0+ (optional, for dataframes)
@@ -261,15 +261,13 @@ CMake controls options with prefixed `-D`, e.g. `-DopenPMD_USE_MPI=OFF`:
 <sup>1</sup> *e.g. changes C++ visibility keywords, breaks MSVC*
 <sup>2</sup> *this includes most pre-/post-condition checks, disabling without specific cause is highly discouraged*
 
-Additionally, the following libraries are shipped internally.
-The following options allow to switch to external installs:
 
-| CMake Option                    | Values     | Library       | Version  |
-|---------------------------------|------------|---------------|----------|
-| `openPMD_USE_INTERNAL_CATCH`    | **ON**/OFF | Catch2        | 2.13.10+ |
-| `openPMD_USE_INTERNAL_PYBIND11` | **ON**/OFF | pybind11      |  2.11.1+ |
-| `openPMD_USE_INTERNAL_JSON`     | **ON**/OFF | NLohmann-JSON |   3.9.1+ |
-| `openPMD_USE_INTERNAL_TOML11`   | **ON**/OFF | toml11        |   3.7.1+ |
+Additionally, the following libraries are downloaded via [FetchContent](https://cmake.org/cmake/help/latest/module/FetchContent.html)
+during the configuration of the project or, if the corresponding `<PACKAGENAME>_ROOT` variable is provided, can be provided externally:
+* [Catch2](https://github.com/catchorg/Catch2) (2.13.10+)
+* [PyBind11](https://github.com/pybind/pybind11) (2.13.0+)
+* [NLohmann-JSON](https://github.com/nlohmann/json) (3.9.1+)
+* [toml11](https://github.com/ToruNiina/toml11) (3.7.1+)
 
 By default, this will build as a shared library (`libopenPMD.[so|dylib|dll]`) and installs also its headers.
 In order to build a static library, append `-DBUILD_SHARED_LIBS=OFF` to the `cmake` command.
@@ -306,7 +304,7 @@ export CMAKE_PREFIX_PATH=$HOME/somepath:$CMAKE_PREFIX_PATH
 Use the following lines in your project's `CMakeLists.txt`:
 ```cmake
 # supports:                       COMPONENTS MPI NOMPI HDF5 ADIOS2
-find_package(openPMD 0.15.0 CONFIG)
+find_package(openPMD 0.17.0 CONFIG)
 
 if(openPMD_FOUND)
     target_link_libraries(YourTarget PRIVATE openPMD::openPMD)
@@ -334,7 +332,7 @@ set(openPMD_INSTALL OFF)            # or instead use:
 set(openPMD_USE_PYTHON OFF)
 FetchContent_Declare(openPMD
   GIT_REPOSITORY "https://github.com/openPMD/openPMD-api.git"
-  GIT_TAG        "0.15.0")
+  GIT_TAG        "0.17.0")
 FetchContent_MakeAvailable(openPMD)
 ```
 
@@ -372,7 +370,7 @@ openPMD-api is developed by many people.
 It was initially started by the [Computational Radiation Physics Group](https://hzdr.de/crp) at [HZDR](https://www.hzdr.de/) as successor to [libSplash](https://github.com/ComputationalRadiationPhysics/libSplash/), generalizing the [successful HDF5 & ADIOS1 implementations](https://arxiv.org/abs/1706.00522) in [PIConGPU](https://github.com/ComputationalRadiationPhysics/picongpu).
 The following people and institutions [contributed](https://github.com/openPMD/openPMD-api/graphs/contributors) to openPMD-api:
 
-* [Axel Huebl (HZDR, now LBNL)](https://github.com/ax3l):
+* [Axel Huebl (LBNL, previously HZDR)](https://github.com/ax3l):
   project lead, releases, documentation, automated CI/CD, Python bindings, Dask, installation & packaging, prior reference implementations
 * [Franz Poeschel (CASUS)](https://github.com/franzpoeschel):
   JSON & ADIOS2 backend, data staging/streaming, reworked class design
@@ -380,6 +378,12 @@ The following people and institutions [contributed](https://github.com/openPMD/o
   initial library design and implementation with HDF5 & ADIOS1 backend
 * [Junmin Gu (LBNL)](https://github.com/guj):
   non-collective parallel I/O fixes, ADIOS improvements, benchmarks
+
+Maintained by the following research groups:
+
+* [Computational Radiation Physics (CRD)](https://www.casus.science/casus/team/) at CASUS/HZDR, led by [Michael Bussmann](https://github.com/bussmann)
+* [Accelerator Modeling Program (AMP)](https://atap.lbl.gov/accelerator-modeling-program/) at LBNL, led by [Jean-Luc Vay](https://github.com/jlvay)
+* [Scientific Data Management (SDM)](https://crd.lbl.gov/divisions/scidata/sdm/) at LBNL, led by [Kesheng (John) Wu](https://github.com/john18)
 
 Further thanks go to improvements and contributions from:
 
@@ -428,6 +432,7 @@ Previously supported by the Consortium for Advanced Modeling of Particles Accele
 Supported by the Exascale Computing Project (17-SC-20-SC), a collaborative effort of two U.S. Department of Energy organizations (Office of Science and the National Nuclear Security Administration).
 This project has received funding from the European Unions Horizon 2020 research and innovation programme under grant agreement No 654220.
 This work was partially funded by the Center of Advanced Systems Understanding (CASUS), which is financed by Germany's Federal Ministry of Education and Research (BMBF) and by the Saxon Ministry for Science, Culture and Tourism (SMWK) with tax funds on the basis of the budget approved by the Saxon State Parliament.
+Supported by the HElmholtz Laser Plasma Metadata Initiative (HELPMI) project (ZT-I-PF-3-066), funded by the "Initiative and Networking Fund" of the Helmholtz Association in the framework of the "Helmholtz Metadata Collaboration" project call 2022.
 
 ### Transitive Contributions
 

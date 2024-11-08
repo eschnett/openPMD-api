@@ -139,7 +139,7 @@ Mesh &Mesh::setDataOrder(Mesh::DataOrder dor)
 
 std::vector<std::string> Mesh::axisLabels() const
 {
-    return getAttribute("axisLabels").get<std::vector<std::string> >();
+    return getAttribute("axisLabels").get<std::vector<std::string>>();
 }
 
 Mesh &Mesh::setAxisLabels(std::vector<std::string> const &als)
@@ -165,7 +165,7 @@ template Mesh &Mesh::setGridSpacing(std::vector<long double> const &gs);
 
 std::vector<double> Mesh::gridGlobalOffset() const
 {
-    return getAttribute("gridGlobalOffset").get<std::vector<double> >();
+    return getAttribute("gridGlobalOffset").get<std::vector<double>>();
 }
 
 Mesh &Mesh::setGridGlobalOffset(std::vector<double> const &ggo)
@@ -219,8 +219,16 @@ void Mesh::flush_impl(
 {
     if (access::readOnly(IOHandler()->m_frontendAccess))
     {
-        for (auto &comp : *this)
-            comp.second.flush(comp.first, flushParams);
+        auto &m = get();
+        if (m.m_datasetDefined)
+        {
+            T_RecordComponent::flush(SCALAR, flushParams);
+        }
+        else
+        {
+            for (auto &comp : *this)
+                comp.second.flush(comp.first, flushParams);
+        }
     }
     else
     {
@@ -228,12 +236,8 @@ void Mesh::flush_impl(
         {
             if (scalar())
             {
-                MeshRecordComponent &mrc = at(RecordComponent::SCALAR);
-                mrc.parent() = parent();
+                MeshRecordComponent &mrc = *this;
                 mrc.flush(name, flushParams);
-                Parameter<Operation::KEEP_SYNCHRONOUS> pSynchronize;
-                pSynchronize.otherWritable = &mrc.writable();
-                IOHandler()->enqueue(IOTask(this, pSynchronize));
             }
             else
             {
@@ -251,12 +255,7 @@ void Mesh::flush_impl(
         {
             if (scalar())
             {
-                for (auto &comp : *this)
-                {
-                    comp.second.flush(name, flushParams);
-                    writable().abstractFilePosition =
-                        comp.second.writable().abstractFilePosition;
-                }
+                T_RecordComponent::flush(name, flushParams);
             }
             else
             {
@@ -332,9 +331,9 @@ void Mesh::read()
     aRead.name = "axisLabels";
     IOHandler()->enqueue(IOTask(this, aRead));
     IOHandler()->flush(internal::defaultFlushParams);
-    if (*aRead.dtype == DT::VEC_STRING || *aRead.dtype == DT::STRING)
-        setAxisLabels(
-            Attribute(*aRead.resource).get<std::vector<std::string> >());
+    Attribute a = Attribute(*aRead.resource);
+    if (auto val = a.getOptional<std::vector<std::string>>(); val.has_value())
+        setAxisLabels(*val);
     else
         throw error::ReadError(
             error::AffectedObject::Attribute,
@@ -347,16 +346,16 @@ void Mesh::read()
     aRead.name = "gridSpacing";
     IOHandler()->enqueue(IOTask(this, aRead));
     IOHandler()->flush(internal::defaultFlushParams);
-    Attribute a = Attribute(*aRead.resource);
+    a = Attribute(*aRead.resource);
     if (*aRead.dtype == DT::VEC_FLOAT || *aRead.dtype == DT::FLOAT)
-        setGridSpacing(a.get<std::vector<float> >());
+        setGridSpacing(a.get<std::vector<float>>());
     else if (*aRead.dtype == DT::VEC_DOUBLE || *aRead.dtype == DT::DOUBLE)
-        setGridSpacing(a.get<std::vector<double> >());
+        setGridSpacing(a.get<std::vector<double>>());
     else if (
         *aRead.dtype == DT::VEC_LONG_DOUBLE || *aRead.dtype == DT::LONG_DOUBLE)
-        setGridSpacing(a.get<std::vector<long double> >());
+        setGridSpacing(a.get<std::vector<long double>>());
     // conversion cast if a backend reports an integer type
-    else if (auto val = a.getOptional<std::vector<double> >(); val.has_value())
+    else if (auto val = a.getOptional<std::vector<double>>(); val.has_value())
         setGridSpacing(val.value());
     else
         throw error::ReadError(
@@ -371,7 +370,7 @@ void Mesh::read()
     IOHandler()->enqueue(IOTask(this, aRead));
     IOHandler()->flush(internal::defaultFlushParams);
     if (auto val =
-            Attribute(*aRead.resource).getOptional<std::vector<double> >();
+            Attribute(*aRead.resource).getOptional<std::vector<double>>();
         val.has_value())
         setGridGlobalOffset(val.value());
     else
@@ -400,8 +399,7 @@ void Mesh::read()
 
     if (scalar())
     {
-        /* using operator[] will incorrectly update parent */
-        map.at(MeshRecordComponent::SCALAR).read();
+        T_RecordComponent::read();
     }
     else
     {
@@ -440,9 +438,9 @@ void Mesh::read()
             dOpen.name = component;
             IOHandler()->enqueue(IOTask(&rc, dOpen));
             IOHandler()->flush(internal::defaultFlushParams);
-            rc.written() = false;
+            rc.setWritten(false, Attributable::EnqueueAsynchronously::No);
             rc.resetDataset(Dataset(*dOpen.dtype, *dOpen.extent));
-            rc.written() = true;
+            rc.setWritten(true, Attributable::EnqueueAsynchronously::No);
             try
             {
                 rc.read();

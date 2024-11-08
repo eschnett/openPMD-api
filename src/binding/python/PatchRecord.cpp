@@ -20,14 +20,19 @@
  */
 #include "openPMD/backend/PatchRecord.hpp"
 
+#include "openPMD/backend/Attributable.hpp"
 #include "openPMD/backend/BaseRecord.hpp"
 #include "openPMD/backend/PatchRecordComponent.hpp"
 
 #include "openPMD/binding/python/Common.hpp"
+#include "openPMD/binding/python/Container.H"
 #include "openPMD/binding/python/UnitDimension.hpp"
 
 void init_PatchRecord(py::module &m)
 {
+    auto py_pr_cnt = declare_container<PyPatchRecordContainer, Attributable>(
+        m, "Patch_Record_Container");
+
     py::class_<PatchRecord, BaseRecord<PatchRecordComponent> >(
         m, "Patch_Record")
         .def_property(
@@ -38,4 +43,6 @@ void init_PatchRecord(py::module &m)
 
         // TODO remove in future versions (deprecated)
         .def("set_unit_dimension", &PatchRecord::setUnitDimension);
+
+    finalize_container<PyPatchRecordContainer>(py_pr_cnt);
 }

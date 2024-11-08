@@ -40,7 +40,8 @@ The following options switch between static and shared builds and control if dep
 CMake Option                   Values          Description
 ============================== =============== ==================================================
 ``openPMD_BUILD_SHARED_LIBS``  **ON**/OFF      Build the C++ API as shared library
-``HDF5_USE_STATIC_LIBRARIES``  ON/**OFF**      Require static HDF5 library
+``HDF5_USE_STATIC_LIBRARIES``  ON/OFF          Require static HDF5 library
+``ZLIB_USE_STATIC_LIBS``       ON/OFF          Require static ZLIB library
 ============================== =============== ==================================================
 
 Note that python modules (``openpmd_api.cpython.[...].so`` or ``openpmd_api.pyd``) are always dynamic libraries.
@@ -58,7 +59,7 @@ In order to build with debug symbols, pass ``-DCMAKE_BUILD_TYPE=Debug`` to your 
 Shipped Dependencies
 --------------------
 
-Additionally, the following libraries are shipped internally for convenience.
+Additionally, the following libraries are downloaded and built internally for convenience, with defaults controlled by the ``openPMD_SUPERBUILD`` option.
 These might get installed in your :ref:`CMAKE_INSTALL_PREFIX <install-cmake>` if the option is ``ON``.
 
 The following options allow to switch to external installs of dependencies:
@@ -66,11 +67,46 @@ The following options allow to switch to external installs of dependencies:
 ================================= =========== ======== ============= ========
 CMake Option                      Values      Installs Library       Version
 ================================= =========== ======== ============= ========
-``openPMD_USE_INTERNAL_CATCH``    **ON**/OFF  No       Catch2        2.13.10+
-``openPMD_USE_INTERNAL_PYBIND11`` **ON**/OFF  No       pybind11       2.11.1+
-``openPMD_USE_INTERNAL_JSON``     **ON**/OFF  No       NLohmann-JSON   3.9.1+
-``openPMD_USE_INTERNAL_TOML11``   **ON**/OFF  No       toml11          3.7.1+
+``openPMD_SUPERBUILD``            **ON**/OFF
+``openPMD_USE_INTERNAL_CATCH``    ON/OFF      No       Catch2        2.13.10+
+``openPMD_USE_INTERNAL_PYBIND11`` ON/OFF      No       pybind11       2.13.0+
+``openPMD_USE_INTERNAL_JSON``     ON/OFF      No       NLohmann-JSON   3.9.1+
+``openPMD_USE_INTERNAL_TOML11``   ON/OFF      No       toml11          3.7.1+
 ================================= =========== ======== ============= ========
+
+Developers can also use a local copy of the source directories or control the exact version to download:
+
+============================= ============================================== ===========================================================
+CMake Option                  Default & Values                               Description
+============================= ============================================== ===========================================================
+``openPMD_catch_src``         *None*                                         Path to Catch2 source directory (preferred if set)
+``openPMD_catch_tar``         *we set and maintain a compatible version*     Remote tarball link to pull and build Catch2 from
+``openPMD_catch_tar_hash``    *we set and maintain a compatible version*     Hash checksum of the tarball of Catch2
+``openPMD_catch_repo``        ``https://github.com/catchorg/Catch2.git``     Repository URI to pull and build Catch2 from
+``openPMD_catch_branch``      *we set and maintain a compatible commit*      Repository branch for ``openPMD_catch_repo``
+``openPMD_pybind11_src``      *None*                                         Path to pybind11 source directory (preferred if set)
+``openPMD_pybind11_tar``      *we set and maintain a compatible version*     Remote tarball link to pull and build pybind11 from
+``openPMD_pybind11_tar_hash`` *we set and maintain a compatible version*     Hash checksum of the tarball of pybind11
+``openPMD_pybind11_repo``     ``https://github.com/pybind/pybind11.git``     Repository URI to pull and build pybind11 from
+``openPMD_pybind11_branch``   *we set and maintain a compatible commit*      Repository branch for ``openPMD_pybind11_repo``
+``openPMD_json_src``          *None*                                         Path to NLohmann JSON source directory (preferred if set)
+``openPMD_json_tar``          *we set and maintain a compatible version*     Remote tarball link to pull and build NLohmann JSON from
+``openPMD_json_tar_hash``     *we set and maintain a compatible version*     Hash checksum of the tarball of NLohmann JSON
+``openPMD_json_repo``         ``https://github.com/nlohmann/json.git``       Repository URI to pull and build NLohmann JSON from
+``openPMD_json_branch``       *we set and maintain a compatible commit*      Repository branch for ``openPMD_json_repo``
+``openPMD_toml11_src``        *None*                                         Path to TOML11 source directory (preferred if set)
+``openPMD_toml11_tar``        *we set and maintain a compatible version*     Remote tarball link to pull and build TOML11 from
+``openPMD_toml11_tar_hash``   *we set and maintain a compatible version*     Hash checksum of the tarball of TOML11
+``openPMD_toml11_repo``       ``https://github.com/ToruNiina/toml11.git``    Repository URI to pull and build TOML11 from
+``openPMD_toml11_branch``     *we set and maintain a compatible commit*      Repository branch for ``openPMD_toml11_repo``
+============================= ============================================== ===========================================================
+
+The precedence for these options is:
+
+#. existing targets found in a superbuild (from another project)
+#. ``_src`` is specified
+#. ``_tar`` is specified
+#. ``_repo`` + ``_branch`` are specified
 
 
 Tests, Examples and Command Line Tools

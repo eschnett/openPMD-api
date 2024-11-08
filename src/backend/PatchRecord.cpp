@@ -41,7 +41,7 @@ PatchRecord::setUnitDimension(std::map<UnitDimension, double> const &udim)
 void PatchRecord::flush_impl(
     std::string const &path, internal::FlushParams const &flushParams)
 {
-    if (this->find(RecordComponent::SCALAR) == this->end())
+    if (!this->datasetDefined())
     {
         if (IOHandler()->m_frontendAccess != Access::READ_ONLY)
             Container<PatchRecordComponent>::flush(
@@ -51,10 +51,10 @@ void PatchRecord::flush_impl(
             comp.second.flush(comp.first, flushParams);
     }
     else
-        this->operator[](RecordComponent::SCALAR).flush(path, flushParams);
-    if (flushParams.flushLevel == FlushLevel::UserFlush)
+        T_RecordComponent::flush(path, flushParams);
+    if (flushParams.flushLevel != FlushLevel::SkeletonOnly)
     {
-        this->dirty() = false;
+        setDirty(false);
     }
 }
 
@@ -90,12 +90,12 @@ void PatchRecord::read()
         IOHandler()->enqueue(IOTask(&prc, dOpen));
         IOHandler()->flush(internal::defaultFlushParams);
         /* allow all attributes to be set */
-        prc.written() = false;
+        prc.setWritten(false, Attributable::EnqueueAsynchronously::No);
         prc.resetDataset(Dataset(*dOpen.dtype, *dOpen.extent));
-        prc.written() = true;
+        prc.setWritten(true, Attributable::EnqueueAsynchronously::No);
         try
         {
-            prc.read();
+            prc.read(/* require_unit_si = */ false);
         }
         catch (error::ReadError const &err)
         {
@@ -106,6 +106,6 @@ void PatchRecord::read()
             this->container().erase(component_name);
         }
     }
-    dirty() = false;
+    setDirty(false);
 }
 } // namespace openPMD

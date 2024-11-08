@@ -5,6 +5,7 @@
 #endif
 #include "openPMD/openPMD.hpp"
 
+#include "openPMD/IO/ADIOS/macros.hpp"
 #include "openPMD/auxiliary/Filesystem.hpp"
 #include "openPMD/auxiliary/JSON.hpp"
 #include "openPMD/auxiliary/UniquePtr.hpp"
@@ -33,8 +34,11 @@ TEST_CASE("versions_test", "[core]")
     auto const is_dot = [](char const c) { return c == '.'; };
     REQUIRE(2u == std::count_if(apiVersion.begin(), apiVersion.end(), is_dot));
 
-    auto const standard = getStandard();
-    REQUIRE(standard == "1.1.0");
+    auto const standardDefault = getStandardDefault();
+    REQUIRE(standardDefault == "1.1.0");
+
+    auto const standard = getStandardMaximum();
+    REQUIRE(standard == "2.0.0");
 
     auto const standardMin = getStandardMinimum();
     REQUIRE(standardMin == "1.0.0");
@@ -47,6 +51,15 @@ TEST_CASE("attribute_dtype_test", "[core]")
 {
     Attribute a = Attribute(static_cast<char>(' '));
     REQUIRE(Datatype::CHAR == a.dtype);
+    {
+        // check that copy constructor works
+        // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+        [[maybe_unused]] Attribute b = a;
+    }
+    {
+        // check that move constructor works
+        [[maybe_unused]] Attribute b = std::move(a);
+    }
     a = Attribute(static_cast<unsigned char>(' '));
     REQUIRE(Datatype::UCHAR == a.dtype);
     a = Attribute(static_cast<short>(0));
@@ -193,12 +206,7 @@ TEST_CASE("myPath", "[core]")
     auto scalarMeshComponent = scalarMesh[RecordComponent::SCALAR];
     REQUIRE(
         pathOf(scalarMeshComponent) ==
-        vec_t{
-            "iterations",
-            "1234",
-            "meshes",
-            "e_chargeDensity",
-            RecordComponent::SCALAR});
+        vec_t{"iterations", "1234", "meshes", "e_chargeDensity"});
     writeSomething(scalarMeshComponent);
 
     auto vectorMesh = iteration.meshes["E"];
@@ -234,13 +242,7 @@ TEST_CASE("myPath", "[core]")
     auto speciesWeightingX = speciesWeighting[RecordComponent::SCALAR];
     REQUIRE(
         pathOf(speciesWeightingX) ==
-        vec_t{
-            "iterations",
-            "1234",
-            "particles",
-            "e",
-            "weighting",
-            RecordComponent::SCALAR});
+        vec_t{"iterations", "1234", "particles", "e", "weighting"});
     writeSomething(speciesWeightingX);
 
     REQUIRE(
@@ -291,8 +293,7 @@ TEST_CASE("myPath", "[core]")
             "particles",
             "e",
             "particlePatches",
-            "numParticles",
-            RecordComponent::SCALAR});
+            "numParticles"});
 #endif
 }
 
@@ -418,7 +419,7 @@ TEST_CASE("particleSpecies_modification_test", "[core]")
     species["positionOffset"][RecordComponent::SCALAR].resetDataset(dset);
     REQUIRE(1 == species.count("positionOffset"));
     auto &patches = species.particlePatches;
-    REQUIRE(2 == patches.size());
+    REQUIRE(0 == patches.size());
     REQUIRE(0 == patches.numAttributes());
     auto &offset = patches["offset"];
     REQUIRE(0 == offset.size());
@@ -441,16 +442,21 @@ TEST_CASE("record_constructor_test", "[core]")
     ps["position"][RecordComponent::SCALAR].resetDataset(dset);
     ps["positionOffset"][RecordComponent::SCALAR].resetDataset(dset);
 
-    REQUIRE(r["x"].resetDataset(dset).unitSI() == 1);
-    REQUIRE(r["x"].numAttributes() == 1); /* unitSI */
-    REQUIRE(r["y"].resetDataset(dset).unitSI() == 1);
-    REQUIRE(r["y"].numAttributes() == 1); /* unitSI */
-    REQUIRE(r["z"].resetDataset(dset).unitSI() == 1);
-    REQUIRE(r["z"].numAttributes() == 1); /* unitSI */
+    // unitSI is set upon flushing
+    // REQUIRE(r["x"].unitSI() == 1);
+    REQUIRE(r["x"].resetDataset(dset).numAttributes() == 0); /* unitSI */
+    // REQUIRE(r["y"].unitSI() == 1);
+    REQUIRE(r["y"].resetDataset(dset).numAttributes() == 0); /* unitSI */
+    // REQUIRE(r["z"].unitSI() == 1);
+    REQUIRE(r["z"].resetDataset(dset).numAttributes() == 0); /* unitSI */
     std::array<double, 7> zeros{{0., 0., 0., 0., 0., 0., 0.}};
     REQUIRE(r.unitDimension() == zeros);
     REQUIRE(r.timeOffset<float>() == static_cast<float>(0));
     REQUIRE(r.numAttributes() == 2); /* timeOffset, unitDimension */
+    o.flush();
+    REQUIRE(r["x"].unitSI() == 1);
+    REQUIRE(r["y"].unitSI() == 1);
+    REQUIRE(r["z"].unitSI() == 1);
 }
 
 TEST_CASE("record_modification_test", "[core]")
@@ -509,15 +515,11 @@ TEST_CASE("mesh_constructor_test", "[core]")
     Mesh &m = o.iterations[42].meshes["E"];
 
     std::vector<double> pos{0};
-    REQUIRE(m["x"].resetDataset(globalDataset).unitSI() == 1);
-    REQUIRE(m["x"].numAttributes() == 2); /* unitSI, position */
-    REQUIRE(m["x"].position<double>() == pos);
-    REQUIRE(m["y"].resetDataset(globalDataset).unitSI() == 1);
-    REQUIRE(m["y"].numAttributes() == 2); /* unitSI, position */
-    REQUIRE(m["y"].position<double>() == pos);
-    REQUIRE(m["z"].resetDataset(globalDataset).unitSI() == 1);
-    REQUIRE(m["z"].numAttributes() == 2); /* unitSI, position */
-    REQUIRE(m["z"].position<double>() == pos);
+    /* unitSI and position are set to default values upon flushing */
+    REQUIRE(m["x"].resetDataset(globalDataset).numAttributes() == 0);
+    REQUIRE(m["y"].resetDataset(globalDataset).numAttributes() == 0);
+    REQUIRE(m["z"].resetDataset(globalDataset).numAttributes() == 0);
+
     REQUIRE(m.geometry() == Mesh::Geometry::cartesian);
     REQUIRE(m.dataOrder() == Mesh::DataOrder::C);
     std::vector<std::string> al{"x"};
@@ -531,6 +533,17 @@ TEST_CASE("mesh_constructor_test", "[core]")
         m.numAttributes() ==
         8); /* axisLabels, dataOrder, geometry, gridGlobalOffset, gridSpacing,
                gridUnitSI, timeOffset, unitDimension */
+
+    o.flush();
+    REQUIRE(m["x"].unitSI() == 1);
+    REQUIRE(m["x"].numAttributes() == 2); /* unitSI, position */
+    REQUIRE(m["x"].position<double>() == pos);
+    REQUIRE(m["y"].unitSI() == 1);
+    REQUIRE(m["y"].numAttributes() == 2); /* unitSI, position */
+    REQUIRE(m["y"].position<double>() == pos);
+    REQUIRE(m["z"].unitSI() == 1);
+    REQUIRE(m["z"].numAttributes() == 2); /* unitSI, position */
+    REQUIRE(m["z"].position<double>() == pos);
 }
 
 TEST_CASE("mesh_modification_test", "[core]")
@@ -708,10 +721,10 @@ TEST_CASE("structure_test", "[core]")
             .parent() == getWritable(&o.iterations[1].particles["P"]));
 
     REQUIRE(
-        1 ==
+        0 ==
         o.iterations[1].particles["P"].particlePatches.count("numParticles"));
     REQUIRE(
-        1 ==
+        0 ==
         o.iterations[1].particles["P"].particlePatches.count(
             "numParticlesOffset"));
 
@@ -966,6 +979,27 @@ TEST_CASE("wrapper_test", "[core]")
 #endif
 }
 
+TEST_CASE("baserecord_test", "[core]")
+{
+    Series o("../samples/testBaseRecord.json", Access::CREATE);
+    auto E = o.iterations[100].meshes["E"];
+    Mesh B = o.iterations[100].meshes["B"];
+    Dataset ds(Datatype::INT, {16, 16});
+    for (auto const &component : {"x", "y", "z"})
+    {
+        E[component].makeConstant(5);
+        E[component].resetDataset(ds);
+    }
+    for (auto const &component : {"x", /* "y", */ "z"})
+    {
+        B[component].makeConstant(5);
+        B[component].resetDataset(ds);
+    }
+    auto inserted = B.insert(B.find("x"), std::pair{"y", E["y"]});
+    REQUIRE(inserted->first == "y");
+    B.erase(inserted);
+}
+
 TEST_CASE("use_count_test", "[core]")
 {
     Series o = Series("./new_openpmd_output.json", Access::CREATE);
@@ -1014,6 +1048,8 @@ TEST_CASE("empty_record_test", "[core]")
                       "RecordComponents: E"));
     o.iterations[1].meshes["E"][RecordComponent::SCALAR].resetDataset(
         Dataset(Datatype::DOUBLE, {1}));
+    auto B = o.iterations[1].meshes["B"];
+    B.resetDataset(Dataset(Datatype::DOUBLE, {1}));
     o.flush();
 }
 
@@ -1144,6 +1180,98 @@ TEST_CASE("backend_via_json", "[core]")
     }
     REQUIRE(auxiliary::file_exists(
         "../samples/optionsViaJsonPseudoFilebased%T.json"));
+}
+
+TEST_CASE("wildcard_extension", "[core]")
+{
+#if openPMD_HAVE_ADIOS2
+#if openPMD_HAVE_ADIOS2_BP5 && openPMD_HAS_ADIOS_2_9
+    constexpr char const *const default_file_ending = "bp5";
+#else
+    constexpr char const *const default_file_ending = "bp4";
+#endif
+#endif
+    auxiliary::remove_directory("../samples/wildcard");
+    auto run_test = [current_test = size_t(0)](
+                        std::string const &write_config,
+                        std::string const &expected_extension) mutable {
+        for (auto [write_access, infix] :
+             {std::make_pair(Access::CREATE, ""),
+              std::make_pair(Access::CREATE, "_%T"),
+              std::make_pair(Access::APPEND, ""),
+              std::make_pair(Access::APPEND, "_%T")})
+        {
+            std::string const wildcard_name = "../samples/wildcard/wildcard_" +
+                std::to_string(current_test) + std::string(infix) + ".%E";
+            std::string const explicit_name = "../samples/wildcard/wildcard_" +
+                std::to_string(current_test) + std::string(infix) + '.' +
+                expected_extension;
+            ++current_test;
+
+            Series series(wildcard_name, write_access, write_config);
+            series.setAttribute("test_index", 0);
+            series.setAttribute("json_config", write_config);
+            series.setAttribute("expected_extension", expected_extension);
+            if (*infix)
+            {
+                series.iterations[0];
+            }
+            series.close();
+
+            Series read(wildcard_name, Access::READ_ONLY);
+            REQUIRE(read.getAttribute("test_index").get<int>() == 0);
+            read.close();
+
+            read = Series(explicit_name, Access::READ_ONLY);
+            REQUIRE(read.getAttribute("test_index").get<int>() == 0);
+            read.close();
+        }
+    };
+#if openPMD_HAVE_ADIOS2
+#if openPMD_HAVE_ADIOS2_BP5
+    run_test(
+        R"({"adios2": {"engine": {"type": "bp5"}}, "backend": "adios2"})",
+        "bp5");
+#endif
+    run_test(
+        R"({"adios2": {"engine": {"type": "bp4"}}, "backend": "adios2"})",
+        "bp4");
+    run_test(R"({"backend": "adios2"})", default_file_ending);
+#endif
+#if openPMD_HAVE_HDF5
+    run_test(R"({"backend": "hdf5"})", "h5");
+#endif
+    run_test(R"({"backend": "json"})", "json");
+
+    for (auto &name :
+         {"../samples/wildcard/colliding.%E",
+          "../samples/wildcard/colliding_%T.%E"})
+    {
+        REQUIRE_THROWS_AS(
+            [&name]() {
+                Series read_nonexisting(name, Access::READ_ONLY);
+                (void)read_nonexisting;
+            }(),
+            error::ReadError);
+        Series write_json(name, Access::CREATE, R"({"backend": "json"})");
+        write_json.iterations[0];
+        write_json.close();
+        REQUIRE_NOTHROW([&name]() {
+            Series read_existing(name, Access::READ_ONLY);
+            (void)read_existing;
+        }());
+#if openPMD_HAVE_ADIOS2
+        Series write_adios(name, Access::CREATE, R"({"backend": "adios2"})");
+        write_adios.iterations[0];
+        write_adios.close();
+        REQUIRE_THROWS_AS(
+            [&name]() {
+                Series read_colliding(name, Access::READ_ONLY);
+                (void)read_colliding;
+            }(),
+            error::ReadError);
+#endif
+    }
 }
 
 TEST_CASE("custom_geometries", "[core]")
@@ -1355,4 +1483,45 @@ TEST_CASE("unique_ptr", "[core]")
     UniquePtrWithLambda<int[]> arrptrFilled{new int[5]{}};
     UniquePtrWithLambda<int[]> arrptrFilledCustom{
         new int[5]{}, [](int const *p) { delete[] p; }};
+}
+
+TEST_CASE("scalar_and_vector", "[core]")
+{
+    {
+        Series series("../samples/scalar_and_vector.json", Access::CREATE);
+        auto E = series.iterations[0].meshes["E"];
+        E["x"].makeEmpty(Datatype::FLOAT, 3);
+        REQUIRE_THROWS_AS(
+            E.makeEmpty(Datatype::FLOAT, 3), error::WrongAPIUsage);
+    }
+    {
+        Series series("scalar_and_vector.json", Access::CREATE);
+        auto E = series.iterations[0].meshes["E"];
+        E.makeEmpty(Datatype::FLOAT, 3);
+        REQUIRE_THROWS_AS(E["x"], error::WrongAPIUsage);
+    }
+    {
+        Series series("../samples/scalar_and_vector.json", Access::CREATE);
+        auto E = series.iterations[0].meshes["E"];
+        E["x"].makeEmpty(Datatype::FLOAT, 3);
+    }
+    {
+        Series read("../samples/scalar_and_vector.json", Access::READ_ONLY);
+        auto E = read.iterations[0].meshes["E"];
+        REQUIRE(E.size() == 1);
+        REQUIRE(!E.scalar());
+        REQUIRE(E.contains("x"));
+    }
+    {
+        Series series("../samples/scalar_and_vector.json", Access::CREATE);
+        auto E = series.iterations[0].meshes["E"];
+        E.makeEmpty(Datatype::FLOAT, 3);
+    }
+    {
+        Series read("../samples/scalar_and_vector.json", Access::READ_ONLY);
+        auto E = read.iterations[0].meshes["E"];
+        REQUIRE(E.size() == 1);
+        REQUIRE(E.scalar());
+        REQUIRE(!E.contains("x"));
+    }
 }
